@@ -1,0 +1,204 @@
+[project]
+name = "axoniq"
+version = "0.2.4"
+description = "Graph-powered code intelligence engine — indexes codebases into a knowledge graph, exposed via MCP tools for AI agents and a CLI for developers."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "harshkedia177", email = "harshkedia717@gmail.com" }]
+keywords = [
+  "claude-code",
+  "code-intelligence",
+  "dead-code",
+  "knowledge-graph",
+  "mcp",
+  "static-analysis",
+  "tree-sitter"
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Code Generators",
+  "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+  "fastembed>=0.7.0",
+  "igraph>=1.0.0",
+  "kuzu>=0.11.0",
+  "leidenalg>=0.11.0",
+  "mcp>=1.0.0",
+  "pathspec>=1.0.4",
+  "rich>=13.0.0",
+  "tree-sitter>=0.25.0",
+  "tree-sitter-javascript>=0.23.0",
+  "tree-sitter-python>=0.23.0",
+  "tree-sitter-typescript>=0.23.0",
+  "typer>=0.15.0",
+  "watchfiles>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/harshkedia177/axon"
+Issues = "https://github.com/harshkedia177/axon/issues"
+Repository = "https://github.com/harshkedia177/axon"
+
+[project.scripts]
+axon = "axon.cli.main:app"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.24.0",
+  "pytest-cov>=6.0.0",
+  "ruff>=0.9.0",
+]
+neo4j = ["neo4j>=5.0.0"]
+
+[build-system]
+requires = ["uv_build>=0.9.21,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+exclude_lines = [
+  "pragma: no cover",
+  "def __repr__",
+  "raise AssertionError",
+  "raise NotImplementedError",
+]
+
+[tool.pyrefly]
+project-includes = ["**/*.py*", "**/*.ipynb"]
+project-excludes = [
+  "build",
+  "dist",
+  ".git",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".venv",
+  "**/__pycache__",
+  "**/*venv/**",
+  "**/.[!/.]*/**",
+  "**/node_modules",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+exclude = [
+  ".git",
+  "__pycache__",
+  ".venv",
+  "venv",
+  ".env",
+  ".ruff_cache",
+  ".pytest_cache",
+  ".genkit",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",  # Pycodestyle errors (style issues)
+  "W",  # Pycodestyle warnings (style issues)
+  "C90",  # McCabe – complexity metric for functions
+  "N",  # PEP8 Naming – naming conventions
+  "D",  # Pydocstyle – docstring formatting
+  "UP",  # Pyupgrade – upgrades syntax to newer sPython versions
+  "YTT",  # Flake8-2020 – checks for Python 2020 best practices
+  "E4",  # Pycodestyle errors (part of E group)
+  "E7",  # Pycodestyle E7xx errors (naming, etc.)
+  "E9",  # Pycodestyle E9xx errors (syntax)
+  "F",  # Pyflakes – detects syntax errors and basic mistakes
+  "B",  # Flake8-bugbear – common bug patterns
+  "I",  # isort – import ordering checks
+  "ANN",  # flake8-annotations – enforces type annotation style
+  "TRY",  # Tryceratops – try/except usage suggestions
+  "FLY",  # Flynt – f-string conversion suggestions
+  "PL",  # Pylint – integration with Pylint conventions
+  "TID",  # Flake8-tidy-imports – enforces specific import styles (e.g., no relative imports)
+  "SIM",  # Flake8-simplify – code simplification hints
+  "Q",  # Flake8-quotes – enforces quote style consistency
+  "PIE",  # Flake8-pie – Python improvement suggestions
+  "C4",  # Flake8-comprehensions – best practices in comprehensions
+  "ISC",  # Flake8-implicit-str-concat – warns on implicit string concatenation
+  "ICN",  # Flake8-import-conventions – enforces conventional import aliases
+  "ASYNC",  # Flake8-async – checks async/await usage
+  "S",  # Flake8-bandit – security issues
+  "BLE",  # Flake8-blind-except – flags bare excepts
+  "FBT",  # Flake8-boolean-trap – potential pitfalls with booleans
+  "B",  # Flake8-bugbear – common bug patterns
+  "A",  # Flake8-builtins – misuse of Python built-in names
+  "COM",  # Flake8-commas – trailing/comma issues
+]
+ignore = [
+  "FIX002",  # Flake8-fixme - checks for TODO comments
+  "TD002",  # Flake8-todos - checks for TODO comments
+  "TD003",  # Flake8-todos - checks for TODO comments
+  "TD004",  # Flake8-todos - checks for TODO comments
+  "TD005",  # Flake8-todos - checks for TODO comments
+  "TD006",  # Flake8-todos - checks for TODO comments
+  "G004",  # Flake8-logging-format - logging format string issues
+  "F403",  # Pyflakes - Checks for the use of wildcard imports.
+  # "F401",  # Pyflakes - imported but unused
+  "PLR2004",  # Pylint - Checks for the use of unnamed numerical constants ("magic") values in comparisons.
+  "D400",  # Pydocstyle - Missing docstring in public module
+  "TRY300",  # Tryceratops - try/except usage suggestions
+  "D202",  # Pydocstyle - blank-line-after-function
+  "F405",  # Pyflakes - Checks for names that might be undefined, but may also be defined in a wildcard import
+  "E501",  # Pycodestyle - line too long
+  "D1",  # Pydocstyle - missing docstring in public module, class, or function
+  "D203",  # Pydocstyle - one blank line required before class docstring
+  "D212",  # Pydocstyle - summary line should be immediately after the opening quotes.
+  "PLW0603",  # Pylint - global-statement
+  "S101",  # Flake8-bandit - Checks for uses of the assert keyword.
+  "S106",  # Flake8-bandit - Checks for hardcoded password strings.
+  "S105",  # Flake8-bandit - Checks for hardcoded password strings.
+  "S603",  # Flake8-bandit - Checks for uses of the exec function.
+  "D413",  # Pydocstyle - Checks for correct order of sections in a docstring.
+]
+# 3. Avoid trying to fix flake8-bugbear (`B`) violations.
+unfixable = ["B"]
+fixable = [
+  "Q000",
+  "COM812",
+  "PIE790",
+  "W293",
+  "D212",
+  "D213",
+  "D205",
+  "ANN201",
+  "D415",
+  "D413",
+  "D400",
+  "D202",
+  "E402",
+  "W292",
+  "W291",
+  "I001",
+  "TID252",
+  "F541",
+  "D200",
+  "F401",
+]  # List the rules you want to be fixable
+
+# 4. Ignore `E402` (import violations) in all `__init__.py` files, and in selected subdirectories.
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["E402"]
+"**/{tests,docs,tools}/*" = ["E402"]
+
+[tool.uv]
+required-environments = [
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'darwin' and platform_machine == 'x86_64'"
+]
+
+[tool.uv.build-backend]
+module-name = "axon"
