@@ -3,7 +3,7 @@ name = "axoniq"
 version = "0.2.4"
 description = "Graph-powered code intelligence engine — indexes codebases into a knowledge graph, exposed via MCP tools for AI agents and a CLI for developers."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 license = "MIT"
 authors = [{ name = "harshkedia177", email = "harshkedia717@gmail.com" }]
 keywords = [
