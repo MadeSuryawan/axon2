@@ -1046,7 +1046,6 @@ class KuzuBackend:
             logger.warning("Unknown label %s for node %s", node.label, node.id)
             return
         if self._check_duplicate_node(table, node.id):
-            logger.debug(f"Duplicate node {node.id} exists, skipping")
             return
         query = (
             f"CREATE (:{table} {{"
