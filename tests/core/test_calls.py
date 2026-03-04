@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from axon.core.graph.graph import KnowledgeGraph
@@ -12,11 +14,7 @@ from axon.core.graph.model import (
     RelType,
     generate_id,
 )
-from axon.core.ingestion.calls import (
-    _CALL_BLOCKLIST,
-    process_calls,
-    resolve_call,
-)
+from axon.core.ingestion.calls import Calls
 from axon.core.ingestion.parser_phase import FileParseData
 from axon.core.ingestion.symbol_lookup import build_name_index
 from axon.core.parsers.base import CallInfo, ParseResult
@@ -43,32 +41,41 @@ def _add_file_node(graph: KnowledgeGraph, path: str) -> str:
     return node_id
 
 
+@dataclass(frozen=True)
+class SymbolNodeInfo:
+    """Parameters for adding a symbol node to the graph."""
+
+    label: NodeLabel
+    file_path: str
+    name: str
+    start_line: int
+    end_line: int
+    class_name: str = ""
+
+
 def _add_symbol_node(
     graph: KnowledgeGraph,
-    label: NodeLabel,
-    file_path: str,
-    name: str,
-    start_line: int,
-    end_line: int,
-    class_name: str = "",
+    info: SymbolNodeInfo,
 ) -> str:
     """Add a symbol node with a DEFINES relationship from the file node."""
     symbol_name = (
-        f"{class_name}.{name}" if label == NodeLabel.METHOD and class_name else name
+        f"{info.class_name}.{info.name}"
+        if info.label == NodeLabel.METHOD and info.class_name
+        else info.name
     )
-    node_id = generate_id(label, file_path, symbol_name)
+    node_id = generate_id(info.label, info.file_path, symbol_name)
     graph.add_node(
         GraphNode(
             id=node_id,
-            label=label,
-            name=name,
-            file_path=file_path,
-            start_line=start_line,
-            end_line=end_line,
-            class_name=class_name,
+            label=info.label,
+            name=info.name,
+            file_path=info.file_path,
+            start_line=info.start_line,
+            end_line=info.end_line,
+            class_name=info.class_name,
         ),
     )
-    file_id = generate_id(NodeLabel.FILE, file_path)
+    file_id = generate_id(NodeLabel.FILE, info.file_path)
     graph.add_relationship(
         GraphRelationship(
             id=f"defines:{file_id}->{node_id}",
@@ -103,14 +110,14 @@ def graph() -> KnowledgeGraph:
     _add_file_node(g, "src/utils.py")
 
     # Symbols in src/auth.py
-    _add_symbol_node(g, NodeLabel.FUNCTION, "src/auth.py", "validate", 1, 10)
-    _add_symbol_node(g, NodeLabel.FUNCTION, "src/auth.py", "hash_password", 12, 20)
+    _add_symbol_node(g, SymbolNodeInfo(NodeLabel.FUNCTION, "src/auth.py", "validate", 1, 10))
+    _add_symbol_node(g, SymbolNodeInfo(NodeLabel.FUNCTION, "src/auth.py", "hash_password", 12, 20))
 
     # Symbols in src/app.py
-    _add_symbol_node(g, NodeLabel.FUNCTION, "src/app.py", "login", 1, 15)
+    _add_symbol_node(g, SymbolNodeInfo(NodeLabel.FUNCTION, "src/app.py", "login", 1, 15))
 
     # Symbols in src/utils.py
-    _add_symbol_node(g, NodeLabel.FUNCTION, "src/utils.py", "helper", 1, 5)
+    _add_symbol_node(g, SymbolNodeInfo(NodeLabel.FUNCTION, "src/utils.py", "helper", 1, 5))
 
     return g
 
@@ -164,7 +171,9 @@ class TestBuildCallIndex:
 
         # IDs match expected generate_id output.
         expected_validate = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate",
+            NodeLabel.FUNCTION,
+            "src/auth.py",
+            "validate",
         )
         assert index["validate"] == [expected_validate]
 
@@ -172,7 +181,7 @@ class TestBuildCallIndex:
         """Class nodes are included (for constructor calls)."""
         g = KnowledgeGraph()
         _add_file_node(g, "src/models.py")
-        _add_symbol_node(g, NodeLabel.CLASS, "src/models.py", "User", 1, 20)
+        _add_symbol_node(g, SymbolNodeInfo(NodeLabel.CLASS, "src/models.py", "User", 1, 20))
 
         index = build_name_index(g, _CALLABLE_LABELS)
         assert "User" in index
@@ -183,8 +192,8 @@ class TestBuildCallIndex:
         g = KnowledgeGraph()
         _add_file_node(g, "src/a.py")
         _add_file_node(g, "src/b.py")
-        _add_symbol_node(g, NodeLabel.FUNCTION, "src/a.py", "init", 1, 5)
-        _add_symbol_node(g, NodeLabel.FUNCTION, "src/b.py", "init", 1, 5)
+        _add_symbol_node(g, SymbolNodeInfo(NodeLabel.FUNCTION, "src/a.py", "init", 1, 5))
+        _add_symbol_node(g, SymbolNodeInfo(NodeLabel.FUNCTION, "src/b.py", "init", 1, 5))
 
         index = build_name_index(g, _CALLABLE_LABELS)
         assert "init" in index
@@ -200,15 +209,17 @@ class TestResolveCallSameFile:
     """hash_password call in auth.py resolves locally (confidence 1.0)."""
 
     def test_resolve_call_same_file(self, graph: KnowledgeGraph) -> None:
-        index = build_name_index(graph, _CALLABLE_LABELS)
         call = CallInfo(name="hash_password", line=5)
+        # Instantiate Calls and set state for testing resolution
+        calls_obj = Calls([], graph)
+        calls_obj._file_path = "src/auth.py"
 
-        target_id, confidence = resolve_call(
-            call, "src/auth.py", index, graph,
-        )
+        target_id, confidence = calls_obj._resolve_call(call)
 
         expected_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "hash_password",
+            NodeLabel.FUNCTION,
+            "src/auth.py",
+            "hash_password",
         )
         assert target_id == expected_id
         assert confidence == 1.0
@@ -223,15 +234,17 @@ class TestResolveCallGlobal:
     """validate call in app.py resolves globally (confidence 0.5)."""
 
     def test_resolve_call_global(self, graph: KnowledgeGraph) -> None:
-        index = build_name_index(graph, _CALLABLE_LABELS)
         call = CallInfo(name="validate", line=8)
+        # Instantiate Calls and set state for testing resolution
+        calls_obj = Calls([], graph)
+        calls_obj._file_path = "src/app.py"
 
-        target_id, confidence = resolve_call(
-            call, "src/app.py", index, graph,
-        )
+        target_id, confidence = calls_obj._resolve_call(call)
 
         expected_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate",
+            NodeLabel.FUNCTION,
+            "src/auth.py",
+            "validate",
         )
         assert target_id == expected_id
         assert confidence == 0.5
@@ -246,12 +259,12 @@ class TestResolveCallUnresolved:
     """Call to unknown function returns None."""
 
     def test_resolve_call_unresolved(self, graph: KnowledgeGraph) -> None:
-        index = build_name_index(graph, _CALLABLE_LABELS)
         call = CallInfo(name="nonexistent_function", line=3)
+        # Instantiate Calls and set state for testing resolution
+        calls_obj = Calls([], graph)
+        calls_obj._file_path = "src/auth.py"
 
-        target_id, confidence = resolve_call(
-            call, "src/auth.py", index, graph,
-        )
+        target_id, confidence = calls_obj._resolve_call(call)
 
         assert target_id is None
         assert confidence == 0.0
@@ -270,7 +283,7 @@ class TestProcessCallsCreatesRelationships:
         graph: KnowledgeGraph,
         parse_data: list[FileParseData],
     ) -> None:
-        process_calls(parse_data, graph)
+        Calls(parse_data, graph).process_calls()
 
         calls_rels = graph.get_relationships_by_type(RelType.CALLS)
         assert len(calls_rels) == 2
@@ -279,10 +292,14 @@ class TestProcessCallsCreatesRelationships:
         pairs = {(r.source, r.target) for r in calls_rels}
 
         validate_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate",
+            NodeLabel.FUNCTION,
+            "src/auth.py",
+            "validate",
         )
         hash_pw_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "hash_password",
+            NodeLabel.FUNCTION,
+            "src/auth.py",
+            "hash_password",
         )
         login_id = generate_id(NodeLabel.FUNCTION, "src/app.py", "login")
 
@@ -305,15 +322,19 @@ class TestProcessCallsConfidence:
         graph: KnowledgeGraph,
         parse_data: list[FileParseData],
     ) -> None:
-        process_calls(parse_data, graph)
+        Calls(parse_data, graph).process_calls()
 
         calls_rels = graph.get_relationships_by_type(RelType.CALLS)
 
         validate_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate",
+            NodeLabel.FUNCTION,
+            "src/auth.py",
+            "validate",
         )
         hash_pw_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "hash_password",
+            NodeLabel.FUNCTION,
+            "src/auth.py",
+            "hash_password",
         )
         login_id = generate_id(NodeLabel.FUNCTION, "src/app.py", "login")
 
@@ -334,7 +355,8 @@ class TestProcessCallsNoDuplicates:
     """Same call twice does not create duplicate edges."""
 
     def test_process_calls_no_duplicates(
-        self, graph: KnowledgeGraph,
+        self,
+        graph: KnowledgeGraph,
     ) -> None:
         # Two identical calls to hash_password inside validate.
         duplicate_parse_data = [
@@ -350,7 +372,7 @@ class TestProcessCallsNoDuplicates:
             ),
         ]
 
-        process_calls(duplicate_parse_data, graph)
+        Calls(duplicate_parse_data, graph).process_calls()
 
         calls_rels = graph.get_relationships_by_type(RelType.CALLS)
         # Both calls resolve to validate -> hash_password, but only one
@@ -372,40 +394,47 @@ class TestResolveMethodCallSelf:
         _add_file_node(g, "src/service.py")
         _add_symbol_node(
             g,
-            NodeLabel.CLASS,
-            "src/service.py",
-            "AuthService",
-            1,
-            30,
+            SymbolNodeInfo(
+                label=NodeLabel.CLASS,
+                file_path="src/service.py",
+                name="AuthService",
+                start_line=1,
+                end_line=30,
+            ),
         )
         _add_symbol_node(
             g,
-            NodeLabel.METHOD,
-            "src/service.py",
-            "login",
-            3,
-            15,
-            class_name="AuthService",
+            SymbolNodeInfo(
+                label=NodeLabel.METHOD,
+                file_path="src/service.py",
+                name="login",
+                start_line=3,
+                end_line=15,
+                class_name="AuthService",
+            ),
         )
         _add_symbol_node(
             g,
-            NodeLabel.METHOD,
-            "src/service.py",
-            "check_token",
-            17,
-            28,
-            class_name="AuthService",
+            SymbolNodeInfo(
+                label=NodeLabel.METHOD,
+                file_path="src/service.py",
+                name="check_token",
+                start_line=17,
+                end_line=28,
+                class_name="AuthService",
+            ),
         )
 
-        index = build_name_index(g, _CALLABLE_LABELS)
         call = CallInfo(name="check_token", line=10, receiver="self")
 
-        target_id, confidence = resolve_call(
-            call, "src/service.py", index, g,
-        )
+        calls_obj = Calls([], g)
+        calls_obj._file_path = "src/service.py"
+        target_id, confidence = calls_obj._resolve_call(call)
 
         expected_id = generate_id(
-            NodeLabel.METHOD, "src/service.py", "AuthService.check_token",
+            NodeLabel.METHOD,
+            "src/service.py",
+            "AuthService.check_token",
         )
         assert target_id == expected_id
         assert confidence == 1.0
@@ -417,31 +446,36 @@ class TestResolveMethodCallSelf:
         _add_file_node(g, "src/service.ts")
         _add_symbol_node(
             g,
-            NodeLabel.CLASS,
-            "src/service.ts",
-            "AuthService",
-            1,
-            30,
+            SymbolNodeInfo(
+                label=NodeLabel.CLASS,
+                file_path="src/service.ts",
+                name="AuthService",
+                start_line=1,
+                end_line=30,
+            ),
         )
         _add_symbol_node(
             g,
-            NodeLabel.METHOD,
-            "src/service.ts",
-            "checkToken",
-            17,
-            28,
-            class_name="AuthService",
+            SymbolNodeInfo(
+                label=NodeLabel.METHOD,
+                file_path="src/service.ts",
+                name="checkToken",
+                start_line=17,
+                end_line=28,
+                class_name="AuthService",
+            ),
         )
 
-        index = build_name_index(g, _CALLABLE_LABELS)
         call = CallInfo(name="checkToken", line=10, receiver="this")
 
-        target_id, confidence = resolve_call(
-            call, "src/service.ts", index, g,
-        )
+        calls_obj = Calls([], g)
+        calls_obj._file_path = "src/service.ts"
+        target_id, confidence = calls_obj._resolve_call(call)
 
         expected_id = generate_id(
-            NodeLabel.METHOD, "src/service.ts", "AuthService.checkToken",
+            NodeLabel.METHOD,
+            "src/service.ts",
+            "AuthService.checkToken",
         )
         assert target_id == expected_id
         assert confidence == 1.0
@@ -463,10 +497,24 @@ class TestResolveCallImportResolved:
         _add_file_node(g, "src/app.py")
 
         _add_symbol_node(
-            g, NodeLabel.FUNCTION, "src/auth.py", "validate", 1, 10,
+            g,
+            SymbolNodeInfo(
+                label=NodeLabel.FUNCTION,
+                file_path="src/auth.py",
+                name="validate",
+                start_line=1,
+                end_line=10,
+            ),
         )
         _add_symbol_node(
-            g, NodeLabel.FUNCTION, "src/app.py", "login", 1, 15,
+            g,
+            SymbolNodeInfo(
+                label=NodeLabel.FUNCTION,
+                file_path="src/app.py",
+                name="login",
+                start_line=1,
+                end_line=15,
+            ),
         )
 
         # IMPORTS relationship: app.py -> auth.py with symbol "validate"
@@ -482,15 +530,16 @@ class TestResolveCallImportResolved:
             ),
         )
 
-        index = build_name_index(g, _CALLABLE_LABELS)
         call = CallInfo(name="validate", line=8)
 
-        target_id, confidence = resolve_call(
-            call, "src/app.py", index, g,
-        )
+        calls_obj = Calls([], g)
+        calls_obj._file_path = "src/app.py"
+        target_id, confidence = calls_obj._resolve_call(call)
 
         expected_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate",
+            NodeLabel.FUNCTION,
+            "src/auth.py",
+            "validate",
         )
         assert target_id == expected_id
         assert confidence == 1.0
@@ -506,28 +555,28 @@ class TestCallBlocklist:
 
     def test_blocklist_is_frozenset(self) -> None:
         """_CALL_BLOCKLIST is a frozenset (immutable, O(1) membership)."""
-        assert isinstance(_CALL_BLOCKLIST, frozenset)
+        assert isinstance(Calls._CALL_BLOCKLIST, frozenset)
 
     def test_python_builtins_in_blocklist(self) -> None:
         """Common Python builtins are blocked."""
         for name in ("print", "len", "range", "isinstance", "super"):
-            assert name in _CALL_BLOCKLIST
+            assert name in Calls._CALL_BLOCKLIST
 
     def test_js_globals_in_blocklist(self) -> None:
         """JS/TS built-ins are blocked."""
         for name in ("console", "setTimeout", "fetch", "JSON", "Promise"):
-            assert name in _CALL_BLOCKLIST
+            assert name in Calls._CALL_BLOCKLIST
 
     def test_react_hooks_in_blocklist(self) -> None:
         """React hooks are blocked."""
         for name in ("useState", "useEffect", "useCallback", "useMemo"):
-            assert name in _CALL_BLOCKLIST
+            assert name in Calls._CALL_BLOCKLIST
 
     def test_blocklisted_call_creates_no_edge(self) -> None:
         """A call to 'print' inside a function produces no CALLS edge."""
         g = KnowledgeGraph()
         _add_file_node(g, "src/main.py")
-        _add_symbol_node(g, NodeLabel.FUNCTION, "src/main.py", "do_work", 1, 10)
+        _add_symbol_node(g, SymbolNodeInfo(NodeLabel.FUNCTION, "src/main.py", "do_work", 1, 10))
 
         parse_data = [
             FileParseData(
@@ -539,7 +588,7 @@ class TestCallBlocklist:
             ),
         ]
 
-        process_calls(parse_data, g)
+        Calls(parse_data, g).process_calls()
         calls_rels = g.get_relationships_by_type(RelType.CALLS)
         assert len(calls_rels) == 0
 
@@ -547,7 +596,7 @@ class TestCallBlocklist:
         """A blocklisted name passed as argument produces no CALLS edge."""
         g = KnowledgeGraph()
         _add_file_node(g, "src/main.py")
-        _add_symbol_node(g, NodeLabel.FUNCTION, "src/main.py", "do_work", 1, 10)
+        _add_symbol_node(g, SymbolNodeInfo(NodeLabel.FUNCTION, "src/main.py", "do_work", 1, 10))
 
         parse_data = [
             FileParseData(
@@ -561,7 +610,7 @@ class TestCallBlocklist:
             ),
         ]
 
-        process_calls(parse_data, g)
+        Calls(parse_data, g).process_calls()
         calls_rels = g.get_relationships_by_type(RelType.CALLS)
         # apply_func is not in the graph so no edge for it; 'str' is blocklisted.
         assert len(calls_rels) == 0
@@ -570,8 +619,8 @@ class TestCallBlocklist:
         """User-defined function names pass through the blocklist filter."""
         g = KnowledgeGraph()
         _add_file_node(g, "src/main.py")
-        _add_symbol_node(g, NodeLabel.FUNCTION, "src/main.py", "caller", 1, 10)
-        _add_symbol_node(g, NodeLabel.FUNCTION, "src/main.py", "my_helper", 12, 20)
+        _add_symbol_node(g, SymbolNodeInfo(NodeLabel.FUNCTION, "src/main.py", "caller", 1, 10))
+        _add_symbol_node(g, SymbolNodeInfo(NodeLabel.FUNCTION, "src/main.py", "my_helper", 12, 20))
 
         parse_data = [
             FileParseData(
@@ -583,6 +632,6 @@ class TestCallBlocklist:
             ),
         ]
 
-        process_calls(parse_data, g)
+        Calls(parse_data, g).process_calls()
         calls_rels = g.get_relationships_by_type(RelType.CALLS)
         assert len(calls_rels) == 1

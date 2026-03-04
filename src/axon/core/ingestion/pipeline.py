@@ -30,7 +30,7 @@ from axon.config.ignore import load_gitignore
 from axon.core.embeddings.embedder import embed_graph
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphRelationship, NodeLabel
-from axon.core.ingestion.calls import process_calls
+from axon.core.ingestion.calls import Calls
 from axon.core.ingestion.community import process_communities
 from axon.core.ingestion.coupling import process_coupling
 from axon.core.ingestion.dead_code import process_dead_code
@@ -60,12 +60,14 @@ class PipelineResult:
     incremental: bool = False
     changed_files: int = 0
 
+
 _SYMBOL_LABELS: frozenset[NodeLabel] = frozenset(NodeLabel) - {
     NodeLabel.FILE,
     NodeLabel.FOLDER,
     NodeLabel.COMMUNITY,
     NodeLabel.PROCESS,
 }
+
 
 def run_pipeline(
     repo_path: Path,
@@ -131,7 +133,7 @@ def run_pipeline(
     report("Resolving imports", 1.0)
 
     report("Tracing calls", 0.0)
-    process_calls(parse_data, graph)
+    Calls(parse_data, graph).process_calls()
     report("Tracing calls", 1.0)
 
     report("Extracting heritage", 0.0)
@@ -177,6 +179,7 @@ def run_pipeline(
                 report("Generating embeddings", 1.0)
             except Exception:
                 import logging as _logging
+
                 _logging.getLogger(__name__).warning(
                     "Embedding phase failed — search will use FTS only",
                     exc_info=True,
@@ -186,6 +189,7 @@ def run_pipeline(
     result.duration_seconds = time.monotonic() - start
 
     return graph, result
+
 
 def reindex_files(
     file_entries: list[FileEntry],
@@ -230,7 +234,7 @@ def reindex_files(
     process_structure(file_entries, graph)
     parse_data = process_parsing(file_entries, graph)
     process_imports(parse_data, graph)
-    process_calls(parse_data, graph)
+    Calls(parse_data, graph).process_calls()
     process_heritage(parse_data, graph)
     process_types(parse_data, graph)
 
@@ -243,6 +247,7 @@ def reindex_files(
     storage.rebuild_fts_indexes()
 
     return graph
+
 
 def build_graph(repo_path: Path) -> KnowledgeGraph:
     """
