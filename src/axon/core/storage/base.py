@@ -16,6 +16,13 @@ from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, GraphRelationship, RelType
 
 
+class BackendNotInitializedError(RuntimeError):
+    """Raised when storage backend is used before calling `initialize()`."""
+
+    def __init__(self, message: str = "Backend not initialized. Call initialize() first.") -> None:
+        super().__init__(message)
+
+
 @dataclass
 class SearchResult:
     """A single result from a full-text or vector search."""
@@ -27,12 +34,14 @@ class SearchResult:
     label: str = ""
     snippet: str = ""
 
+
 @dataclass
 class NodeEmbedding:
     """An embedding vector associated with a graph node."""
 
     node_id: str
     embedding: list[float] = field(default_factory=list)
+
 
 @runtime_checkable
 class StorageBackend(Protocol):
@@ -70,7 +79,9 @@ class StorageBackend(Protocol):
         ...
 
     def get_inbound_cross_file_edges(
-        self, file_path: str, exclude_source_files: set[str] | None = None,
+        self,
+        file_path: str,
+        exclude_source_files: set[str] | None = None,
     ) -> list[GraphRelationship]:
         """
         Return inbound edges where the target is in *file_path* and the source is not.
@@ -110,13 +121,18 @@ class StorageBackend(Protocol):
         Breadth-first traversal up to *depth* hops from *start_id*.
 
         Args:
+            start_id: The ID of the node to start traversal from.
+            depth: Maximum number of hops to traverse.
             direction: ``"callers"`` follows incoming CALLS (blast radius),
                        ``"callees"`` follows outgoing CALLS (dependencies).
         """
         ...
 
     def traverse_with_depth(
-        self, start_id: str, depth: int, direction: str = "callers",
+        self,
+        start_id: str,
+        depth: int,
+        direction: str = "callers",
     ) -> list[tuple[GraphNode, int]]:
         """
         BFS traversal returning ``(node, hop_depth)`` pairs.
@@ -130,7 +146,7 @@ class StorageBackend(Protocol):
         """Return ``{node_id: process_name}`` for nodes belonging to a Process."""
         ...
 
-    def execute_raw(self, query: str) -> Any:
+    def execute_raw(self, query: str) -> list[list[Any]]:
         """Execute a raw backend-specific query string."""
         ...
 
@@ -143,7 +159,10 @@ class StorageBackend(Protocol):
         ...
 
     def fuzzy_search(
-        self, query: str, limit: int, max_distance: int = 2,
+        self,
+        query: str,
+        limit: int,
+        max_distance: int = 2,
     ) -> list[SearchResult]:
         """Fuzzy name search by edit distance."""
         ...

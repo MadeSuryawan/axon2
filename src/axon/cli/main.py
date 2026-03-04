@@ -11,6 +11,7 @@ from logging import basicConfig, getLogger
 from pathlib import Path
 from shutil import rmtree
 from sys import stderr
+from typing import Any
 
 from mcp.server.stdio import stdio_server
 from rich.console import Console
@@ -142,7 +143,7 @@ def _register_in_global_registry(meta: dict, repo_path: Path) -> None:
     (slot / "meta.json").write_text(dumps(registry_meta, indent=2) + "\n", encoding="utf-8")
 
 
-def _build_meta(result: PipelineResult, repo_path: Path) -> dict:  # noqa: F821
+def _build_meta(result: PipelineResult, repo_path: Path) -> dict[str, Any]:
     """Build the meta.json dict from a pipeline result."""
     return {
         "version": __version__,
@@ -529,7 +530,7 @@ def serve(
     storage = _get_kuzu(db_path)
 
     _check_meta_json(axon_dir, repo_path, storage)
-    print("  Index complete.", file=stderr, flush=True)
+    console.print("Index complete.")
 
     lock = Lock()
     set_storage(storage)
