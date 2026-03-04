@@ -2,42 +2,95 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-import logging
-import shutil
-from datetime import datetime, timezone
+from asyncio import Event, Lock, gather
+from asyncio import run as asyncio_run
+from datetime import UTC, datetime
+from hashlib import sha256
+from json import JSONDecodeError, dumps, loads
+from logging import getLogger
 from pathlib import Path
-from typing import Optional
+from shutil import rmtree
+from sys import stderr
 
-import typer
+from mcp.server.stdio import stdio_server
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from typer import Argument, Exit, Option, Typer, confirm
 
 from axon import __version__
+from axon.core.diff import diff_branches, format_diff
+from axon.core.ingestion.pipeline import PipelineResult, run_pipeline
+from axon.core.ingestion.watcher import watch_repo
+from axon.core.storage.kuzu_backend import KuzuBackend
+from axon.mcp.server import main as mcp_main
+from axon.mcp.server import server as mcp_server
+from axon.mcp.server import set_lock, set_storage
+from axon.mcp.tools import (
+    handle_context,
+    handle_cypher,
+    handle_dead_code,
+    handle_impact,
+    handle_list_repos,
+    handle_query,
+)
 
 console = Console()
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
+# Module-level singletons to avoid typer calls in function defaults
+_REPO_OPTION = Option(
+    None,
+    "--repo",
+    "-r",
+    help="Path to the repository (defaults to auto-discovery).",
+)
 
-def _load_storage(repo_path: Path | None = None) -> "KuzuBackend":  # noqa: F821
+_PATH_ARG = Argument(Path("."), help="Path to the repository to index.")
+
+# Boolean defaults to avoid FBT003 errors
+_FALSE = False
+_TRUE = True
+
+
+def _get_kuzu(db_path: Path, *, read_only: bool = False) -> KuzuBackend:
+    """Return a KuzuBackend initialised at *db_path*."""
+    storage = KuzuBackend()
+    storage.initialize(db_path, read_only=read_only)
+    return storage
+
+
+def _get_path(path: Path | None = None) -> tuple[Path, Path, Path]:
+    """Return (repo_path, axon_dir, db_path) for the given path."""
+    repo_path = Path.cwd().resolve() if not path else path.resolve()
+    if not repo_path.is_dir():
+        console.print(f"[red]Error:[/red] {repo_path} is not a directory.")
+        raise Exit(code=1)
+
+    console.print(f"[bold]Indexing[/bold] {repo_path}")
+
+    axon_dir = repo_path / ".axon"
+    axon_dir.mkdir(parents=True, exist_ok=True)
+    db_path = axon_dir / "kuzu"
+
+    return repo_path, axon_dir, db_path
+
+
+def _load_storage(repo_path: Path | None = None) -> KuzuBackend:
     """Load the KuzuDB backend for the given or current repo."""
-    from axon.core.storage.kuzu_backend import KuzuBackend
 
     target = (repo_path or Path.cwd()).resolve()
     db_path = target / ".axon" / "kuzu"
     if not db_path.exists():
         console.print(
-            f"[red]Error:[/red] No index found at {target}. Run 'axon analyze' first."
+            f"[red]Error:[/red] No index found at {target}. Run 'axon analyze' first.",
         )
-        raise typer.Exit(code=1)
+        raise Exit(code=1)
 
-    storage = KuzuBackend()
-    storage.initialize(db_path, read_only=True)
-    return storage
+    return _get_kuzu(db_path, read_only=True)
 
 
 def _register_in_global_registry(meta: dict, repo_path: Path) -> None:
-    """Write meta.json into ``~/.axon/repos/{slug}/`` for multi-repo discovery.
+    """
+    Write meta.json into ``~/.axon/repos/{slug}/`` for multi-repo discovery.
 
     Slug is ``{repo_name}`` if that slot is unclaimed or already belongs to
     this repo.  Falls back to ``{repo_name}-{sha256(path)[:8]}`` on collision.
@@ -50,12 +103,12 @@ def _register_in_global_registry(meta: dict, repo_path: Path) -> None:
     if candidate.exists():
         existing_meta_path = candidate / "meta.json"
         try:
-            existing = json.loads(existing_meta_path.read_text())
+            existing = loads(existing_meta_path.read_text())
             if existing.get("path") != str(repo_path):
-                short_hash = hashlib.sha256(str(repo_path).encode()).hexdigest()[:8]
+                short_hash = sha256(str(repo_path).encode()).hexdigest()[:8]
                 slug = f"{repo_name}-{short_hash}"
-        except (json.JSONDecodeError, OSError):
-            shutil.rmtree(candidate, ignore_errors=True)  # Clean broken slot before claiming
+        except (JSONDecodeError, OSError):
+            rmtree(candidate, ignore_errors=True)  # Clean broken slot before claiming
 
     # Remove any stale entry for the same repo_path under a different slug.
     if registry_root.exists():
@@ -64,10 +117,10 @@ def _register_in_global_registry(meta: dict, repo_path: Path) -> None:
                 continue
             old_meta = old_dir / "meta.json"
             try:
-                old_data = json.loads(old_meta.read_text())
+                old_data = loads(old_meta.read_text())
                 if old_data.get("path") == str(repo_path):
-                    shutil.rmtree(old_dir, ignore_errors=True)
-            except (json.JSONDecodeError, OSError):
+                    rmtree(old_dir, ignore_errors=True)
+            except (JSONDecodeError, OSError):
                 continue
 
     slot = registry_root / slug
@@ -75,12 +128,10 @@ def _register_in_global_registry(meta: dict, repo_path: Path) -> None:
 
     registry_meta = dict(meta)
     registry_meta["slug"] = slug
-    (slot / "meta.json").write_text(
-        json.dumps(registry_meta, indent=2) + "\n", encoding="utf-8"
-    )
+    (slot / "meta.json").write_text(dumps(registry_meta, indent=2) + "\n", encoding="utf-8")
 
 
-def _build_meta(result: "PipelineResult", repo_path: Path) -> dict:  # noqa: F821
+def _build_meta(result: PipelineResult, repo_path: Path) -> dict:  # noqa: F821
     """Build the meta.json dict from a pipeline result."""
     return {
         "version": __version__,
@@ -96,25 +147,28 @@ def _build_meta(result: "PipelineResult", repo_path: Path) -> dict:  # noqa: F82
             "coupled_pairs": result.coupled_pairs,
             "embeddings": result.embeddings,
         },
-        "last_indexed_at": datetime.now(tz=timezone.utc).isoformat(),
+        "last_indexed_at": datetime.now(tz=UTC).isoformat(),
     }
 
 
-app = typer.Typer(
+app = Typer(
     name="axon",
     help="Axon — Graph-powered code intelligence engine.",
     no_args_is_help=True,
 )
 
-def _version_callback(value: bool) -> None:
+
+def _version_callback(*, value: bool) -> None:
     """Print the version and exit."""
     if value:
         console.print(f"Axon v{__version__}")
-        raise typer.Exit()
+        raise Exit()
+
 
 @app.callback()
 def main(
-    version: Optional[bool] = typer.Option(  # noqa: N803
+    *,
+    version: bool | None = Option(
         None,
         "--version",
         "-v",
@@ -125,29 +179,22 @@ def main(
 ) -> None:
     """Axon — Graph-powered code intelligence engine."""
 
+
 @app.command()
 def analyze(
-    path: Path = typer.Argument(Path("."), help="Path to the repository to index."),
-    full: bool = typer.Option(False, "--full", help="Perform a full re-index."),
-    no_embeddings: bool = typer.Option(False, "--no-embeddings", help="Skip vector embedding generation."),
+    path: Path = _PATH_ARG,
+    *,
+    full: bool = Option(_FALSE, "--full", help="Perform a full re-index."),
+    no_embeddings: bool = Option(
+        _FALSE,
+        "--no-embeddings",
+        help="Skip vector embedding generation.",
+    ),
 ) -> None:
     """Index a repository into a knowledge graph."""
-    from axon.core.ingestion.pipeline import PipelineResult, run_pipeline
-    from axon.core.storage.kuzu_backend import KuzuBackend
 
-    repo_path = path.resolve()
-    if not repo_path.is_dir():
-        console.print(f"[red]Error:[/red] {repo_path} is not a directory.")
-        raise typer.Exit(code=1)
-
-    console.print(f"[bold]Indexing[/bold] {repo_path}")
-
-    axon_dir = repo_path / ".axon"
-    axon_dir.mkdir(parents=True, exist_ok=True)
-    db_path = axon_dir / "kuzu"
-
-    storage = KuzuBackend()
-    storage.initialize(db_path)
+    repo_path, axon_dir, db_path = _get_path(path)
+    storage = _get_kuzu(db_path)
 
     result: PipelineResult | None = None
     with Progress(
@@ -171,11 +218,11 @@ def analyze(
 
     meta = _build_meta(result, repo_path)
     meta_path = axon_dir / "meta.json"
-    meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    meta_path.write_text(dumps(meta, indent=2) + "\n", encoding="utf-8")
 
     try:
         _register_in_global_registry(meta, repo_path)
-    except Exception:
+    except (RuntimeError, OSError, SystemError):
         logger.debug("Failed to register repo in global registry", exc_info=True)
 
     console.print()
@@ -197,6 +244,7 @@ def analyze(
 
     storage.close()
 
+
 @app.command()
 def status() -> None:
     """Show index status for current repository."""
@@ -204,12 +252,10 @@ def status() -> None:
     meta_path = repo_path / ".axon" / "meta.json"
 
     if not meta_path.exists():
-        console.print(
-            f"[red]Error:[/red] No index found at {repo_path}. Run 'axon analyze' first."
-        )
-        raise typer.Exit(code=1)
+        console.print(f"[red]Error:[/red] No index found at {repo_path}. Run 'axon analyze' first.")
+        raise Exit(code=1)
 
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta = loads(meta_path.read_text(encoding="utf-8"))
     stats = meta.get("stats", {})
 
     console.print(f"[bold]Index status for[/bold] {repo_path}")
@@ -228,101 +274,113 @@ def status() -> None:
     if stats.get("coupled_pairs", 0) > 0:
         console.print(f"  Coupled pairs:  {stats['coupled_pairs']}")
 
+
 @app.command(name="list")
 def list_repos() -> None:
     """List all indexed repositories."""
-    from axon.mcp.tools import handle_list_repos
 
     result = handle_list_repos()
     console.print(result)
 
+
 @app.command()
 def clean(
-    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt."),
+    *,
+    force: bool = Option(
+        _FALSE,
+        "--force",
+        "-f",
+        help="Skip confirmation prompt.",
+    ),
 ) -> None:
     """Delete index for current repository."""
-    repo_path = Path.cwd().resolve()
-    axon_dir = repo_path / ".axon"
+    repo_path, axon_dir, _ = _get_path()
 
     if not axon_dir.exists():
-        console.print(
-            f"[red]Error:[/red] No index found at {repo_path}. Nothing to clean."
-        )
-        raise typer.Exit(code=1)
+        console.print(f"[red]Error:[/red] No index found at {repo_path}. Nothing to clean.")
+        raise Exit(code=1)
 
-    if not force:
-        confirm = typer.confirm(f"Delete index at {axon_dir}?")
-        if not confirm:
-            console.print("Aborted.")
-            raise typer.Exit()
+    if not force and not confirm(f"Delete index at {axon_dir}?"):
+        console.print("Aborted.")
+        raise Exit()
 
-    shutil.rmtree(axon_dir)
+    rmtree(axon_dir)
     console.print(f"[green]Deleted[/green] {axon_dir}")
+
 
 @app.command()
 def query(
-    q: str = typer.Argument(..., help="Search query for the knowledge graph."),
-    limit: int = typer.Option(20, "--limit", "-n", help="Maximum number of results."),
+    q: str = Argument(..., help="Search query for the knowledge graph."),
+    limit: int = Option(20, "--limit", "-n", help="Maximum number of results."),
 ) -> None:
     """Search the knowledge graph."""
-    from axon.mcp.tools import handle_query
 
     storage = _load_storage()
     result = handle_query(storage, q, limit=limit)
     console.print(result)
     storage.close()
 
+
 @app.command()
 def context(
-    name: str = typer.Argument(..., help="Symbol name to inspect."),
+    name: str = Argument(..., help="Symbol name to inspect."),
 ) -> None:
     """Show 360-degree view of a symbol."""
-    from axon.mcp.tools import handle_context
 
     storage = _load_storage()
     result = handle_context(storage, name)
     console.print(result)
     storage.close()
 
+
 @app.command()
 def impact(
-    target: str = typer.Argument(..., help="Symbol to analyze blast radius for."),
-    depth: int = typer.Option(3, "--depth", "-d", min=1, max=10, help="Traversal depth (1-10)."),
+    target: str = Argument(..., help="Symbol to analyze blast radius for."),
+    depth: int = Option(3, "--depth", "-d", min=1, max=10, help="Traversal depth (1-10)."),
 ) -> None:
     """Show blast radius of changing a symbol."""
-    from axon.mcp.tools import handle_impact
 
     storage = _load_storage()
     result = handle_impact(storage, target, depth=depth)
     console.print(result)
     storage.close()
 
+
 @app.command(name="dead-code")
 def dead_code() -> None:
     """List all detected dead code."""
-    from axon.mcp.tools import handle_dead_code
 
     storage = _load_storage()
     result = handle_dead_code(storage)
     console.print(result)
     storage.close()
 
+
 @app.command()
 def cypher(
-    query: str = typer.Argument(..., help="Raw Cypher query to execute."),
+    query: str = Argument(..., help="Raw Cypher query to execute."),
 ) -> None:
     """Execute raw Cypher against the knowledge graph."""
-    from axon.mcp.tools import handle_cypher
 
     storage = _load_storage()
     result = handle_cypher(storage, query)
     console.print(result)
     storage.close()
 
+
 @app.command()
 def setup(
-    claude: bool = typer.Option(False, "--claude", help="Configure MCP for Claude Code."),
-    cursor: bool = typer.Option(False, "--cursor", help="Configure MCP for Cursor."),
+    *,
+    claude: bool = Option(
+        _FALSE,
+        "--claude",
+        help="Configure MCP for Claude Code.",
+    ),
+    cursor: bool = Option(
+        _FALSE,
+        "--cursor",
+        help="Configure MCP for Cursor.",
+    ),
 ) -> None:
     """Configure MCP for Claude Code / Cursor."""
     mcp_config = {
@@ -333,29 +391,20 @@ def setup(
     if claude or (not claude and not cursor):
         console.print("[bold]Claude Code[/bold]")
         console.print("Add to .mcp.json in your project root:")
-        console.print(json.dumps({"mcpServers": {"axon": mcp_config}}, indent=2))
+        console.print(dumps({"mcpServers": {"axon": mcp_config}}, indent=2))
         console.print("\n[dim]Or run: claude mcp add axon -- axon serve --watch[/dim]")
 
     if cursor or (not claude and not cursor):
         console.print("[bold]Add to your Cursor MCP config:[/bold]")
-        console.print(json.dumps({"axon": mcp_config}, indent=2))
+        console.print(dumps({"axon": mcp_config}, indent=2))
+
 
 @app.command()
 def watch() -> None:
     """Watch mode — re-index on file changes."""
-    import asyncio
 
-    from axon.core.ingestion.pipeline import run_pipeline
-    from axon.core.ingestion.watcher import watch_repo
-    from axon.core.storage.kuzu_backend import KuzuBackend
-
-    repo_path = Path.cwd().resolve()
-    axon_dir = repo_path / ".axon"
-    axon_dir.mkdir(parents=True, exist_ok=True)
-    db_path = axon_dir / "kuzu"
-
-    storage = KuzuBackend()
-    storage.initialize(db_path)
+    repo_path, axon_dir, db_path = _get_path()
+    storage = _get_kuzu(db_path)
 
     if not (axon_dir / "meta.json").exists():
         console.print("[bold]Running initial index...[/bold]")
@@ -364,106 +413,104 @@ def watch() -> None:
     console.print(f"[bold]Watching[/bold] {repo_path} for changes (Ctrl+C to stop)")
 
     try:
-        asyncio.run(watch_repo(repo_path, storage))
+        asyncio_run(watch_repo(repo_path, storage))
     except KeyboardInterrupt:
         console.print("\n[bold]Watch stopped.[/bold]")
     finally:
         storage.close()
 
+
 @app.command()
 def diff(
-    branch_range: str = typer.Argument(..., help="Branch range for comparison (e.g. main..feature)."),
+    branch_range: str = Argument(
+        ...,
+        help="Branch range for comparison (e.g. main..feature).",
+    ),
 ) -> None:
     """Structural branch comparison."""
-    from axon.core.diff import diff_branches, format_diff
 
     repo_path = Path.cwd().resolve()
     try:
         result = diff_branches(repo_path, branch_range)
     except (ValueError, RuntimeError) as exc:
         console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
+        raise Exit(code=1) from exc
 
     console.print(format_diff(result))
+
 
 @app.command()
 def mcp() -> None:
     """Start MCP server (stdio transport)."""
-    import asyncio
 
-    from axon.mcp.server import main as mcp_main
+    asyncio_run(mcp_main())
 
-    asyncio.run(mcp_main())
 
 @app.command()
 def serve(
-    watch: bool = typer.Option(False, "--watch", "-w", help="Enable file watching with auto-reindex."),
+    *,
+    watch: bool = Option(
+        _FALSE,
+        "--watch",
+        "-w",
+        help="Enable file watching with auto-reindex.",
+    ),
 ) -> None:
     """Start MCP server, optionally with live file watching."""
-    import asyncio
-    import sys
-
-    from axon.mcp.server import main as mcp_main, set_lock, set_storage
 
     if not watch:
-        asyncio.run(mcp_main())
+        asyncio_run(mcp_main())
         return
 
-    from axon.core.ingestion.pipeline import run_pipeline
-    from axon.core.ingestion.watcher import watch_repo
-    from axon.core.storage.kuzu_backend import KuzuBackend
-
-    repo_path = Path.cwd().resolve()
-    axon_dir = repo_path / ".axon"
-    axon_dir.mkdir(parents=True, exist_ok=True)
-    db_path = axon_dir / "kuzu"
-
-    storage = KuzuBackend()
-    storage.initialize(db_path)
+    repo_path, axon_dir, db_path = _get_path()
+    storage = _get_kuzu(db_path)
 
     if not (axon_dir / "meta.json").exists():
-        print("Running initial index...", file=sys.stderr)
+        print("Running initial index...", file=stderr)
 
         def _stderr_progress(phase: str, pct: float) -> None:
             if pct == 0.0:
-                print(f"  {phase}...", file=sys.stderr, flush=True)
+                print(f"  {phase}...", file=stderr, flush=True)
 
         _, result = run_pipeline(repo_path, storage, full=True, progress_callback=_stderr_progress)
 
         meta = _build_meta(result, repo_path)
         meta_path = axon_dir / "meta.json"
-        meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        meta_path.write_text(dumps(meta, indent=2) + "\n", encoding="utf-8")
 
         try:
             _register_in_global_registry(meta, repo_path)
-        except Exception:
+        except (RuntimeError, OSError, SystemError):
             logger.debug("Failed to register repo in global registry", exc_info=True)
 
-        print("  Index complete.", file=sys.stderr, flush=True)
+        print("  Index complete.", file=stderr, flush=True)
 
-    lock = asyncio.Lock()
+    lock = Lock()
     set_storage(storage)
     set_lock(lock)
 
     async def _run() -> None:
-        from mcp.server.stdio import stdio_server
-        from axon.mcp.server import server as mcp_server
 
-        stop = asyncio.Event()
+        stop = Event()
 
         async with stdio_server() as (read, write):
-            async def _mcp_then_stop():
+
+            async def _mcp_then_stop() -> None:
                 await mcp_server.run(read, write, mcp_server.create_initialization_options())
                 stop.set()
 
-            await asyncio.gather(
+            await gather(
                 _mcp_then_stop(),
                 watch_repo(repo_path, storage, stop_event=stop, lock=lock),
             )
 
     try:
-        asyncio.run(_run())
+        asyncio_run(_run())
     except KeyboardInterrupt:
         pass
     finally:
         storage.close()
+
+
+if __name__ == "__main__":
+    app()
