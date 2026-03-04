@@ -82,6 +82,11 @@ neo4j = [
     { name = "neo4j" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest-cov" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "fastembed", specifier = ">=0.7.0" },
@@ -104,6 +109,9 @@ requires-dist = [
     { name = "watchfiles", specifier = ">=1.0.0" },
 ]
 provides-extras = ["dev", "neo4j"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest-cov", specifier = ">=7.0.0" }]
 
 [[package]]
 name = "certifi"

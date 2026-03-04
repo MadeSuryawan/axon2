@@ -880,7 +880,7 @@ class KuzuBackend:
                 writer = csv_writer(f)
                 writer.writerows(rows)
                 csv_path = f.name
-            conn.execute(f'COPY {table} FROM "{csv_path}" (HEADER=false)')
+            conn.execute(f"COPY {table} FROM '{csv_path}' (HEADER=false, PARALLEL=false)")
         finally:
             if csv_path:
                 Path(csv_path).unlink(missing_ok=True)

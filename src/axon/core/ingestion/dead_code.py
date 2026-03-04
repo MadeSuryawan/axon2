@@ -314,7 +314,7 @@ def _clear_protocol_stub_false_positives(graph: KnowledgeGraph) -> int:
         if method.class_name in protocol_class_names:
             method.is_dead = False
             cleared += 1
-            logger.debug("Un-flagged protocol stub: %s.%s", method.class_name, method.name)
+            logger.debug(f"Un-flagged protocol stub: {method.class_name}.{method.class_name}")
 
     return cleared
 
@@ -382,7 +382,7 @@ def process_dead_code(graph: KnowledgeGraph) -> int:
 
             node.is_dead = True
             dead_count += 1
-            logger.debug("Dead symbol: %s (%s)", node.name, node.id)
+            # logger.debug(f"Dead symbol: {node.name} ({node.id})")
 
     # Second pass: un-flag overrides of called base-class methods.
     cleared = _clear_override_false_positives(graph)

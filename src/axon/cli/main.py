@@ -23,7 +23,7 @@ from typer import Argument, Exit, Option, Typer, confirm
 from axon import __version__
 from axon.core.diff import diff_branches, format_diff
 from axon.core.ingestion.pipeline import PipelineResult, run_pipeline
-from axon.core.ingestion.watcher import watch_repo
+from axon.core.ingestion.watcher import RepositoryWatcher, WatcherDeps
 from axon.core.storage.kuzu_backend import KuzuBackend
 from axon.mcp.server import main as mcp_main
 from axon.mcp.server import server as mcp_server
@@ -423,9 +423,10 @@ def watch() -> None:
         run_pipeline(repo_path, storage, full=True)
 
     console.print(f"[bold]Watching[/bold] {repo_path} for changes (Ctrl+C to stop)")
-
+    deps = WatcherDeps(repo_path, storage)
+    watcher = RepositoryWatcher(deps)
     try:
-        asyncio_run(watch_repo(repo_path, storage))
+        asyncio_run(watcher.watch())
     except KeyboardInterrupt:
         console.print("\n[bold]Watch stopped.[/bold]")
     finally:
@@ -494,6 +495,9 @@ async def _run(
     set_lock(lock)
     stop = Event()
 
+    deps = WatcherDeps(repo_path, storage, stop_event=stop, lock=lock)
+    watcher = RepositoryWatcher(deps)
+
     async with stdio_server() as (read, write):
 
         async def _mcp_then_stop() -> None:
@@ -506,7 +510,7 @@ async def _run(
 
         await gather(
             _mcp_then_stop(),
-            watch_repo(repo_path, storage, stop_event=stop, lock=lock),
+            watcher.watch(),
         )
 
 
@@ -530,29 +534,10 @@ def serve(
     storage = _get_kuzu(db_path)
 
     _check_meta_json(axon_dir, repo_path, storage)
-    console.print("Index complete.")
-
-    lock = Lock()
-    set_storage(storage)
-    set_lock(lock)
-
-    async def _run() -> None:
-
-        stop = Event()
-
-        async with stdio_server() as (read, write):
-
-            async def _mcp_then_stop() -> None:
-                await mcp_server.run(read, write, mcp_server.create_initialization_options())
-                stop.set()
-
-            await gather(
-                _mcp_then_stop(),
-                watch_repo(repo_path, storage, stop_event=stop, lock=lock),
-            )
+    console.print("[b green]Index complete.")
 
     try:
-        asyncio_run(_run())
+        asyncio_run(_run(repo_path, storage))
     except KeyboardInterrupt:
         pass
     finally:

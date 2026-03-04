@@ -202,3 +202,8 @@ required-environments = [
 
 [tool.uv.build-backend]
 module-name = "axon"
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.0.0",
+]
