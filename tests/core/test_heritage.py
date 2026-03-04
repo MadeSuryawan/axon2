@@ -21,7 +21,8 @@ _HERITAGE_LABELS = (NodeLabel.CLASS, NodeLabel.INTERFACE)
 
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
-    """Return a KnowledgeGraph pre-populated with Class and Interface nodes.
+    """
+    Return a KnowledgeGraph pre-populated with Class and Interface nodes.
 
     Layout:
     - Class:src/models.py:Animal
@@ -38,7 +39,7 @@ def graph() -> KnowledgeGraph:
             label=NodeLabel.CLASS,
             name="Animal",
             file_path="src/models.py",
-        )
+        ),
     )
     g.add_node(
         GraphNode(
@@ -46,7 +47,7 @@ def graph() -> KnowledgeGraph:
             label=NodeLabel.CLASS,
             name="Dog",
             file_path="src/models.py",
-        )
+        ),
     )
 
     # TypeScript interface node
@@ -56,7 +57,7 @@ def graph() -> KnowledgeGraph:
             label=NodeLabel.INTERFACE,
             name="Serializable",
             file_path="src/types.ts",
-        )
+        ),
     )
 
     # TypeScript class node
@@ -66,7 +67,7 @@ def graph() -> KnowledgeGraph:
             label=NodeLabel.CLASS,
             name="User",
             file_path="src/models.ts",
-        )
+        ),
     )
 
     return g
@@ -111,7 +112,7 @@ class TestBuildSymbolIndex:
                 assert node.name == name
 
     def test_index_excludes_non_heritage_labels(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         # Add a function node -- it should NOT appear in the index.
         graph.add_node(
@@ -120,7 +121,7 @@ class TestBuildSymbolIndex:
                 label=NodeLabel.FUNCTION,
                 name="helper",
                 file_path="src/models.py",
-            )
+            ),
         )
         index = build_name_index(graph, _HERITAGE_LABELS)
         assert "helper" not in index
@@ -151,7 +152,7 @@ class TestProcessHeritageExtends:
         assert rel.target == generate_id(NodeLabel.CLASS, "src/models.py", "Animal")
 
     def test_extends_relationship_id_format(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             _make_parse_data(
@@ -190,11 +191,11 @@ class TestProcessHeritageImplements:
         rel = impl_rels[0]
         assert rel.source == generate_id(NodeLabel.CLASS, "src/models.ts", "User")
         assert rel.target == generate_id(
-            NodeLabel.INTERFACE, "src/types.ts", "Serializable"
+            NodeLabel.INTERFACE, "src/types.ts", "Serializable",
         )
 
     def test_implements_relationship_type(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             _make_parse_data(
@@ -217,7 +218,7 @@ class TestProcessHeritageUnresolvedParent:
     """Heritage referencing an unknown parent is silently skipped."""
 
     def test_process_heritage_unresolved_parent(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             _make_parse_data(
@@ -232,7 +233,7 @@ class TestProcessHeritageUnresolvedParent:
         assert len(extends_rels) == 0
 
     def test_unresolved_child_also_skipped(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             _make_parse_data(
@@ -262,7 +263,7 @@ class TestProcessHeritageMultiple:
                 label=NodeLabel.INTERFACE,
                 name="Printable",
                 file_path="src/types.ts",
-            )
+            ),
         )
         # User extends Animal (cross-file), implements Serializable, implements Printable
         # For cross-file extends to work we need Animal in the graph (it is).
@@ -289,7 +290,7 @@ class TestProcessHeritageMultiple:
         assert total == 3
 
     def test_multiple_heritage_sources_are_correct(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         graph.add_node(
             GraphNode(
@@ -297,7 +298,7 @@ class TestProcessHeritageMultiple:
                 label=NodeLabel.INTERFACE,
                 name="Printable",
                 file_path="src/types.ts",
-            )
+            ),
         )
         parse_data = [
             _make_parse_data(
@@ -314,7 +315,7 @@ class TestProcessHeritageMultiple:
         user_id = generate_id(NodeLabel.CLASS, "src/models.ts", "User")
 
         all_rels = graph.get_relationships_by_type(
-            RelType.EXTENDS
+            RelType.EXTENDS,
         ) + graph.get_relationships_by_type(RelType.IMPLEMENTS)
 
         for rel in all_rels:

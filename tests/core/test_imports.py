@@ -19,7 +19,6 @@ from axon.core.ingestion.imports import (
 from axon.core.ingestion.parser_phase import FileParseData
 from axon.core.parsers.base import ImportInfo, ParseResult
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -53,7 +52,7 @@ def graph() -> KnowledgeGraph:
                 name=path.rsplit("/", 1)[-1],
                 file_path=path,
                 language=language,
-            )
+            ),
         )
     return g
 
@@ -93,7 +92,7 @@ class TestBuildFileIndex:
                 label=NodeLabel.FOLDER,
                 name="src",
                 file_path="src",
-            )
+            ),
         )
         g.add_node(
             GraphNode(
@@ -102,7 +101,7 @@ class TestBuildFileIndex:
                 name="app.py",
                 file_path="src/app.py",
                 language="python",
-            )
+            ),
         )
         index = build_file_index(g)
         assert len(index) == 1
@@ -118,7 +117,7 @@ class TestResolvePythonRelativeImport:
     """from .utils import helper in src/auth/validate.py -> src/auth/utils.py."""
 
     def test_resolve_python_relative_import(
-        self, file_index: dict[str, str]
+        self, file_index: dict[str, str],
     ) -> None:
         imp = ImportInfo(module=".utils", names=["helper"], is_relative=True)
         result = resolve_import_path("src/auth/validate.py", imp, file_index)
@@ -131,7 +130,7 @@ class TestResolvePythonParentRelative:
     """from ..models import User in src/auth/validate.py -> src/models/__init__.py."""
 
     def test_resolve_python_parent_relative(
-        self, file_index: dict[str, str]
+        self, file_index: dict[str, str],
     ) -> None:
         imp = ImportInfo(module="..models", names=["User"], is_relative=True)
         result = resolve_import_path("src/auth/validate.py", imp, file_index)
@@ -149,7 +148,7 @@ class TestResolvePythonParentRelative:
                 name="validate.py",
                 file_path="src/auth/validate.py",
                 language="python",
-            )
+            ),
         )
         g.add_node(
             GraphNode(
@@ -158,7 +157,7 @@ class TestResolvePythonParentRelative:
                 name="models.py",
                 file_path="src/models.py",
                 language="python",
-            )
+            ),
         )
         index = build_file_index(g)
 
@@ -173,14 +172,14 @@ class TestResolvePythonExternal:
     """import os or from os.path import join -> returns None (external)."""
 
     def test_resolve_python_external_import(
-        self, file_index: dict[str, str]
+        self, file_index: dict[str, str],
     ) -> None:
         imp = ImportInfo(module="os", names=[], is_relative=False)
         result = resolve_import_path("src/auth/validate.py", imp, file_index)
         assert result is None
 
     def test_resolve_python_external_from_import(
-        self, file_index: dict[str, str]
+        self, file_index: dict[str, str],
     ) -> None:
         imp = ImportInfo(module="os.path", names=["join"], is_relative=False)
         result = resolve_import_path("src/auth/validate.py", imp, file_index)
@@ -207,7 +206,7 @@ class TestResolveTsDirectoryIndex:
     """import { User } from './models' in lib/index.ts -> lib/models/index.ts."""
 
     def test_resolve_ts_directory_index(
-        self, file_index: dict[str, str]
+        self, file_index: dict[str, str],
     ) -> None:
         imp = ImportInfo(module="./models", names=["User"], is_relative=False)
         result = resolve_import_path("lib/index.ts", imp, file_index)
@@ -225,7 +224,7 @@ class TestResolveTsExternal:
         assert result is None
 
     def test_resolve_ts_scoped_external(
-        self, file_index: dict[str, str]
+        self, file_index: dict[str, str],
     ) -> None:
         imp = ImportInfo(module="@types/node", names=[], is_relative=False)
         result = resolve_import_path("lib/index.ts", imp, file_index)
@@ -241,7 +240,7 @@ class TestProcessImportsCreatesRelationships:
     """process_imports creates IMPORTS edges in the graph."""
 
     def test_process_imports_creates_relationships(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             FileParseData(
@@ -270,7 +269,7 @@ class TestProcessImportsCreatesRelationships:
         assert rel.properties["symbols"] == "helper"
 
     def test_process_imports_relationship_id_format(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             FileParseData(
@@ -296,7 +295,7 @@ class TestProcessImportsCreatesRelationships:
         assert "->" in imports_rels[0].id
 
     def test_process_imports_skips_external(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             FileParseData(
@@ -316,7 +315,7 @@ class TestProcessImportsCreatesRelationships:
         assert len(imports_rels) == 0
 
     def test_process_imports_multiple_files(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             FileParseData(
@@ -357,7 +356,7 @@ class TestProcessImportsNoDuplicates:
     """Same import twice does not create duplicate edges."""
 
     def test_process_imports_no_duplicates(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             FileParseData(
@@ -386,9 +385,10 @@ class TestProcessImportsNoDuplicates:
         assert len(imports_rels) == 1
 
     def test_process_imports_no_duplicates_across_parse_data(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
-        """Duplicates are also prevented across separate FileParseData entries
+        """
+        Duplicates are also prevented across separate FileParseData entries
         for the same file (e.g. if the same file appears twice)."""
         parse_data = [
             FileParseData(

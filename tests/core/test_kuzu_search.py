@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from axon.core.graph.model import GraphNode, NodeLabel, generate_id
-from axon.core.storage.base import NodeEmbedding, SearchResult
+from axon.core.storage.base import NodeEmbedding
 from axon.core.storage.kuzu_backend import KuzuBackend
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ class TestFtsSearch:
         """Nodes with the query term in the name should rank above content-only matches."""
         name_match = _make_node(name="target", file_path="src/a.py", content="")
         content_only = _make_node(
-            name="unrelated", file_path="src/c.py", content="has target in body"
+            name="unrelated", file_path="src/c.py", content="has target in body",
         )
         backend.add_nodes([name_match, content_only])
         backend.rebuild_fts_indexes()
@@ -314,7 +314,7 @@ class TestFuzzySearch:
     def test_fuzzy_result_fields(self, backend: KuzuBackend) -> None:
         """SearchResult should have populated fields."""
         node = _make_node(
-            name="my_handler", file_path="src/handlers.py", content="handler body"
+            name="my_handler", file_path="src/handlers.py", content="handler body",
         )
         backend.add_nodes([node])
 

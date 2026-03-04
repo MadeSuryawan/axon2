@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from axon.core.ingestion.walker import FileEntry, discover_files, walk_repo
-
+from axon.core.ingestion.walker import discover_files, walk_repo
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -16,7 +15,8 @@ from axon.core.ingestion.walker import FileEntry, discover_files, walk_repo
 
 @pytest.fixture()
 def tmp_repo(tmp_path: Path) -> Path:
-    """Create a realistic temporary repo structure for testing.
+    """
+    Create a realistic temporary repo structure for testing.
 
     Layout::
 

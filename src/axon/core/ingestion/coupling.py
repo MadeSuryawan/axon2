@@ -1,4 +1,5 @@
-"""Phase 11: Change Coupling Analysis for Axon.
+"""
+Phase 11: Change Coupling Analysis for Axon.
 
 Analyzes git history to discover files that frequently change together.
 Co-change frequency is a strong indicator of logical coupling -- files that
@@ -23,7 +24,6 @@ from axon.core.graph.model import (
     GraphRelationship,
     NodeLabel,
     RelType,
-    generate_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,8 @@ def parse_git_log(
     *,
     graph_files: set[str] | None = None,
 ) -> list[list[str]]:
-    """Run ``git log`` and return commits as lists of changed file paths.
+    """
+    Run ``git log`` and return commits as lists of changed file paths.
 
     Each inner list contains the file paths that were modified in a single
     commit.  Only files present in *graph_files* (when provided) are kept,
@@ -54,7 +55,7 @@ def parse_git_log(
         "git",
         "log",
         "--name-only",
-        f'--pretty=format:COMMIT:%H',
+        "--pretty=format:COMMIT:%H",
         f"--since={since_months} months ago",
     ]
 
@@ -98,7 +99,8 @@ def build_cochange_matrix(
     min_cochanges: int = 3,
     max_files_per_commit: int = 50,
 ) -> dict[tuple[str, str], int]:
-    """Build a co-change frequency matrix from commit data.
+    """
+    Build a co-change frequency matrix from commit data.
 
     For every pair of files that appear in the same commit, their co-change
     count is incremented.  Only pairs whose count meets or exceeds
@@ -136,7 +138,8 @@ def calculate_coupling(
     co_changes: int,
     total_changes: dict[str, int],
 ) -> float:
-    """Compute the coupling strength between two files.
+    """
+    Compute the coupling strength between two files.
 
     The formula is::
 
@@ -165,7 +168,8 @@ def process_coupling(
     *,
     commits: list[list[str]] | None = None,
 ) -> int:
-    """Analyze git history and create ``COUPLED_WITH`` relationships.
+    """
+    Analyze git history and create ``COUPLED_WITH`` relationships.
 
     Parses the git log (or uses pre-supplied *commits* for testing),
     computes pairwise coupling strengths, and adds edges between ``File``
@@ -217,7 +221,7 @@ def process_coupling(
                 source=id_a,
                 target=id_b,
                 properties={"strength": strength, "co_changes": co_changes},
-            )
+            ),
         )
         count += 1
 

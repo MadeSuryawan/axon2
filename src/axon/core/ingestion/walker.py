@@ -9,6 +9,7 @@ from pathlib import Path
 from axon.config.ignore import should_ignore
 from axon.config.languages import get_language, is_supported
 
+
 @dataclass
 class FileEntry:
     """A source file discovered during walking."""
@@ -21,7 +22,8 @@ def discover_files(
     repo_path: Path,
     gitignore_patterns: list[str] | None = None,
 ) -> list[Path]:
-    """Discover supported source file paths without reading their content.
+    """
+    Discover supported source file paths without reading their content.
 
     Walks *repo_path* recursively and returns paths that are not ignored and
     have a supported language extension.  Useful for incremental indexing where
@@ -60,7 +62,8 @@ def discover_files(
     return discovered
 
 def read_file(repo_path: Path, file_path: Path) -> FileEntry | None:
-    """Read a single file and return a :class:`FileEntry`, or ``None`` on failure.
+    """
+    Read a single file and return a :class:`FileEntry`, or ``None`` on failure.
 
     Returns ``None`` when the file cannot be decoded as UTF-8 (binary files),
     when the file is empty, or when an OS-level error occurs.
@@ -90,7 +93,8 @@ def walk_repo(
     gitignore_patterns: list[str] | None = None,
     max_workers: int = 8,
 ) -> list[FileEntry]:
-    """Walk a repository and return all supported source files with their content.
+    """
+    Walk a repository and return all supported source files with their content.
 
     Discovers files using the same filtering logic as :func:`discover_files`,
     then reads their content in parallel using a :class:`ThreadPoolExecutor`.

@@ -1,4 +1,5 @@
-"""Storage backend abstraction for Axon.
+"""
+Storage backend abstraction for Axon.
 
 Defines the :class:`StorageBackend` protocol that all concrete storage
 implementations (KuzuDB, Neo4j, in-memory, etc.) must satisfy, along with
@@ -13,6 +14,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, GraphRelationship, RelType
+
 
 @dataclass
 class SearchResult:
@@ -34,7 +36,8 @@ class NodeEmbedding:
 
 @runtime_checkable
 class StorageBackend(Protocol):
-    """Protocol that every Axon storage backend must implement.
+    """
+    Protocol that every Axon storage backend must implement.
 
     Covers the full lifecycle of graph persistence: initialisation,
     CRUD operations on nodes and relationships, querying, full-text
@@ -58,7 +61,8 @@ class StorageBackend(Protocol):
         ...
 
     def remove_nodes_by_file(self, file_path: str) -> int:
-        """Remove all nodes originating from *file_path*.
+        """
+        Remove all nodes originating from *file_path*.
 
         Returns:
             The number of nodes removed.
@@ -68,7 +72,8 @@ class StorageBackend(Protocol):
     def get_inbound_cross_file_edges(
         self, file_path: str, exclude_source_files: set[str] | None = None,
     ) -> list[GraphRelationship]:
-        """Return inbound edges where the target is in *file_path* and the source is not.
+        """
+        Return inbound edges where the target is in *file_path* and the source is not.
 
         Args:
             file_path: Target file whose inbound edges to collect.
@@ -101,7 +106,8 @@ class StorageBackend(Protocol):
         ...
 
     def traverse(self, start_id: str, depth: int, direction: str = "callers") -> list[GraphNode]:
-        """Breadth-first traversal up to *depth* hops from *start_id*.
+        """
+        Breadth-first traversal up to *depth* hops from *start_id*.
 
         Args:
             direction: ``"callers"`` follows incoming CALLS (blast radius),
@@ -110,9 +116,10 @@ class StorageBackend(Protocol):
         ...
 
     def traverse_with_depth(
-        self, start_id: str, depth: int, direction: str = "callers"
+        self, start_id: str, depth: int, direction: str = "callers",
     ) -> list[tuple[GraphNode, int]]:
-        """BFS traversal returning ``(node, hop_depth)`` pairs.
+        """
+        BFS traversal returning ``(node, hop_depth)`` pairs.
 
         Same semantics as :meth:`traverse` but preserves the hop distance
         (1-based) so callers can group results by proximity.
@@ -136,7 +143,7 @@ class StorageBackend(Protocol):
         ...
 
     def fuzzy_search(
-        self, query: str, limit: int, max_distance: int = 2
+        self, query: str, limit: int, max_distance: int = 2,
     ) -> list[SearchResult]:
         """Fuzzy name search by edit distance."""
         ...

@@ -1,4 +1,5 @@
-"""Phase 7: Type analysis for Axon.
+"""
+Phase 7: Type analysis for Axon.
 
 Takes FileParseData from the parser phase and resolves type annotation
 references to their corresponding Class, Interface, or TypeAlias nodes,
@@ -17,7 +18,11 @@ from axon.core.graph.model import (
     RelType,
 )
 from axon.core.ingestion.parser_phase import FileParseData
-from axon.core.ingestion.symbol_lookup import build_file_symbol_index, build_name_index, find_containing_symbol
+from axon.core.ingestion.symbol_lookup import (
+    build_file_symbol_index,
+    build_name_index,
+    find_containing_symbol,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +43,8 @@ def _resolve_type(
     type_index: dict[str, list[str]],
     graph: KnowledgeGraph,
 ) -> str | None:
-    """Resolve a type name to a target node ID.
+    """
+    Resolve a type name to a target node ID.
 
     Resolution strategy (tried in order):
 
@@ -74,7 +80,8 @@ def process_types(
     parse_data: list[FileParseData],
     graph: KnowledgeGraph,
 ) -> None:
-    """Resolve type references and create USES_TYPE relationships in the graph.
+    """
+    Resolve type references and create USES_TYPE relationships in the graph.
 
     For each type reference in the parse data:
 
@@ -101,7 +108,7 @@ def process_types(
     for fpd in parse_data:
         for type_ref in fpd.parse_result.type_refs:
             source_id = find_containing_symbol(
-                type_ref.line, fpd.file_path, file_sym_index
+                type_ref.line, fpd.file_path, file_sym_index,
             )
             if source_id is None:
                 logger.debug(
@@ -113,7 +120,7 @@ def process_types(
                 continue
 
             target_id = _resolve_type(
-                type_ref.name, fpd.file_path, type_index, graph
+                type_ref.name, fpd.file_path, type_index, graph,
             )
             if target_id is None:
                 continue
@@ -131,5 +138,5 @@ def process_types(
                     source=source_id,
                     target=target_id,
                     properties={"role": role},
-                )
+                ),
             )

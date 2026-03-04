@@ -1,4 +1,5 @@
-"""MCP resource handlers for Axon.
+"""
+MCP resource handlers for Axon.
 
 Provides helper functions that generate formatted text for MCP resources.
 These are read-only snapshots of graph state, exposed as text resources
@@ -11,7 +12,8 @@ from axon.core.storage.base import StorageBackend
 
 
 def get_overview(storage: StorageBackend) -> str:
-    """Generate a high-level overview of the indexed codebase.
+    """
+    Generate a high-level overview of the indexed codebase.
 
     Queries the storage backend for aggregate statistics and returns
     a human-readable summary.
@@ -27,7 +29,7 @@ def get_overview(storage: StorageBackend) -> str:
 
     try:
         rows = storage.execute_raw(
-            "MATCH (n) RETURN labels(n), count(n) ORDER BY count(n) DESC"
+            "MATCH (n) RETURN labels(n), count(n) ORDER BY count(n) DESC",
         )
         if rows:
             lines.append("Node counts by type:")
@@ -47,7 +49,7 @@ def get_overview(storage: StorageBackend) -> str:
 
     try:
         rows = storage.execute_raw(
-            "MATCH ()-[r]->() RETURN r.rel_type, count(r) ORDER BY count(r) DESC"
+            "MATCH ()-[r]->() RETURN r.rel_type, count(r) ORDER BY count(r) DESC",
         )
         if rows:
             lines.append("Relationship counts by type:")
@@ -66,7 +68,8 @@ def get_overview(storage: StorageBackend) -> str:
     return "\n".join(lines)
 
 def get_dead_code_list(storage: StorageBackend) -> str:
-    """Generate a formatted list of all dead code in the codebase.
+    """
+    Generate a formatted list of all dead code in the codebase.
 
     Args:
         storage: The storage backend.
@@ -77,7 +80,7 @@ def get_dead_code_list(storage: StorageBackend) -> str:
     try:
         rows = storage.execute_raw(
             "MATCH (n) WHERE n.is_dead = true "
-            "RETURN n.name, n.file_path, n.start_line ORDER BY n.file_path"
+            "RETURN n.name, n.file_path, n.start_line ORDER BY n.file_path",
         )
     except Exception:
         return "Could not retrieve dead code list."
@@ -101,7 +104,8 @@ def get_dead_code_list(storage: StorageBackend) -> str:
     return "\n".join(lines)
 
 def get_schema() -> str:
-    """Return a static description of the Axon knowledge graph schema.
+    """
+    Return a static description of the Axon knowledge graph schema.
 
     This does not require a storage connection since the schema is fixed.
 

@@ -1,4 +1,5 @@
-"""In-memory knowledge graph for Axon.
+"""
+In-memory knowledge graph for Axon.
 
 Provides a lightweight, dict-backed graph that stores :class:`GraphNode` and
 :class:`GraphRelationship` instances with O(1) lookups by ID.  Secondary
@@ -13,8 +14,10 @@ from collections.abc import Iterator
 
 from axon.core.graph.model import GraphNode, GraphRelationship, NodeLabel, RelType
 
+
 class KnowledgeGraph:
-    """An in-memory directed graph of code-level entities and their relationships.
+    """
+    An in-memory directed graph of code-level entities and their relationships.
 
     Nodes are keyed by their ``id`` string; relationships are keyed likewise.
     Removing a node cascades to any relationship where the node appears as
@@ -57,7 +60,8 @@ class KnowledgeGraph:
         return len(self._by_label.get(label, {}))
 
     def has_incoming(self, node_id: str, rel_type: RelType) -> bool:
-        """Return ``True`` if *node_id* has any incoming edge of *rel_type*.
+        """
+        Return ``True`` if *node_id* has any incoming edge of *rel_type*.
 
         Checks the index without materializing a list of relationships.
         """
@@ -77,7 +81,8 @@ class KnowledgeGraph:
         return self._nodes.get(node_id)
 
     def remove_node(self, node_id: str) -> bool:
-        """Remove a node and cascade-delete all relationships that reference it.
+        """
+        Remove a node and cascade-delete all relationships that reference it.
 
         Returns:
             ``True`` if the node existed and was removed, ``False`` otherwise.
@@ -91,7 +96,8 @@ class KnowledgeGraph:
         return True
 
     def remove_nodes_by_file(self, file_path: str) -> int:
-        """Remove every node whose ``file_path`` matches and cascade relationships.
+        """
+        Remove every node whose ``file_path`` matches and cascade relationships.
 
         Returns:
             The number of nodes removed.
@@ -131,9 +137,10 @@ class KnowledgeGraph:
         return list(self._by_rel_type.get(rel_type, {}).values())
 
     def get_outgoing(
-        self, node_id: str, rel_type: RelType | None = None
+        self, node_id: str, rel_type: RelType | None = None,
     ) -> list[GraphRelationship]:
-        """Return relationships originating from *node_id*.
+        """
+        Return relationships originating from *node_id*.
 
         If *rel_type* is given, only relationships of that type are returned.
         """
@@ -143,9 +150,10 @@ class KnowledgeGraph:
         return [r for r in rels.values() if r.type == rel_type]
 
     def get_incoming(
-        self, node_id: str, rel_type: RelType | None = None
+        self, node_id: str, rel_type: RelType | None = None,
     ) -> list[GraphRelationship]:
-        """Return relationships targeting *node_id*.
+        """
+        Return relationships targeting *node_id*.
 
         If *rel_type* is given, only relationships of that type are returned.
         """

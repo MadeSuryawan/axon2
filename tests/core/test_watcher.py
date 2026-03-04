@@ -7,18 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from axon.core.ingestion.pipeline import reindex_files, run_pipeline
-from axon.core.ingestion.watcher import (
-    _reindex_files,
-    _get_head_sha,
-    _compute_dirty_node_ids,
-    _run_incremental_global_phases,
-    QUIET_PERIOD,
-)
 from axon.core.graph.model import NodeLabel
+from axon.core.ingestion.pipeline import reindex_files, run_pipeline
 from axon.core.ingestion.walker import FileEntry, read_file
+from axon.core.ingestion.watcher import (
+    _compute_dirty_node_ids,
+    _get_head_sha,
+    _reindex_files,
+    _run_incremental_global_phases,
+)
 from axon.core.storage.kuzu_backend import KuzuBackend
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -103,7 +101,7 @@ class TestReindexFiles:
     """reindex_files() correctly removes old nodes and adds new ones."""
 
     def test_reindex_updates_content(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         # Initial full index.
         run_pipeline(tmp_repo, storage)
@@ -134,7 +132,7 @@ class TestReindexFiles:
         assert "goodbye" in node.content
 
     def test_reindex_handles_new_symbols(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         # Initial full index.
         run_pipeline(tmp_repo, storage)
@@ -161,7 +159,7 @@ class TestReindexFiles:
         assert storage.get_node("function:src/app.py:world") is not None
 
     def test_reindex_removes_deleted_symbols(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         # Initial full index.
         run_pipeline(tmp_repo, storage)
@@ -193,7 +191,7 @@ class TestWatcherReindexFiles:
     """_reindex_files filters and processes changed paths."""
 
     def test_reindexes_changed_files(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         run_pipeline(tmp_repo, storage)
 
@@ -212,7 +210,7 @@ class TestWatcherReindexFiles:
         assert "updated" in node.content
 
     def test_skips_ignored_files(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         run_pipeline(tmp_repo, storage)
 
@@ -227,7 +225,7 @@ class TestWatcherReindexFiles:
         assert count == 0
 
     def test_skips_unsupported_files(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         run_pipeline(tmp_repo, storage)
 
@@ -239,7 +237,7 @@ class TestWatcherReindexFiles:
         assert count == 0
 
     def test_handles_deleted_files(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         run_pipeline(tmp_repo, storage)
 
@@ -255,7 +253,7 @@ class TestWatcherReindexFiles:
         assert count == 0
 
     def test_handles_multiple_files(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         run_pipeline(tmp_repo, storage)
 
@@ -322,7 +320,7 @@ class TestReindexFilesReturnType:
     """_reindex_files returns (count, set_of_paths)."""
 
     def test_returns_count_and_paths(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         run_pipeline(tmp_repo, storage, full=True, embeddings=False)
 
@@ -341,7 +339,7 @@ class TestComputeDirtyNodeIds:
     """_compute_dirty_node_ids finds nodes in dirty files + their CALLS neighbors."""
 
     def test_includes_dirty_file_nodes(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         run_pipeline(tmp_repo, storage, full=True, embeddings=False)
 
@@ -365,7 +363,7 @@ class TestRunIncrementalGlobalPhases:
     """Integration test: stale synthetic nodes are not re-persisted."""
 
     def test_no_stale_synthetic_nodes_after_rerun(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         """Run global phases twice; verify old communities don't survive."""
         run_pipeline(tmp_repo, storage, full=True, embeddings=False)

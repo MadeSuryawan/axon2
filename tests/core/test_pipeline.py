@@ -9,7 +9,6 @@ import pytest
 from axon.core.ingestion.pipeline import PipelineResult, run_pipeline
 from axon.core.storage.kuzu_backend import KuzuBackend
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -17,7 +16,8 @@ from axon.core.storage.kuzu_backend import KuzuBackend
 
 @pytest.fixture()
 def tmp_repo(tmp_path: Path) -> Path:
-    """Create a small Python repository under a temporary directory.
+    """
+    Create a small Python repository under a temporary directory.
 
     Layout::
 
@@ -74,7 +74,7 @@ class TestRunPipelineBasic:
     """run_pipeline completes without error and returns a PipelineResult."""
 
     def test_run_pipeline_basic(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         _, result = run_pipeline(tmp_repo, storage)
 
@@ -91,7 +91,7 @@ class TestRunPipelineFileCount:
     """The result reports exactly 3 files from the fixture repo."""
 
     def test_run_pipeline_file_count(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         _, result = run_pipeline(tmp_repo, storage)
 
@@ -107,7 +107,7 @@ class TestRunPipelineFindsSymbols:
     """At least 3 symbols are discovered (main, validate, helper)."""
 
     def test_run_pipeline_finds_symbols(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         _, result = run_pipeline(tmp_repo, storage)
 
@@ -123,7 +123,7 @@ class TestRunPipelineFindsRelationships:
     """Relationships are created (CONTAINS, DEFINES, IMPORTS, CALLS)."""
 
     def test_run_pipeline_finds_relationships(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         _, result = run_pipeline(tmp_repo, storage)
 
@@ -139,7 +139,7 @@ class TestRunPipelineProgressCallback:
     """The progress callback is invoked with expected phase names."""
 
     def test_run_pipeline_progress_callback(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         calls: list[tuple[str, float]] = []
 
@@ -170,7 +170,7 @@ class TestRunPipelineLoadsToStorage:
     """After the pipeline runs, nodes are retrievable from storage."""
 
     def test_run_pipeline_loads_to_storage(
-        self, tmp_repo: Path, storage: KuzuBackend
+        self, tmp_repo: Path, storage: KuzuBackend,
     ) -> None:
         run_pipeline(tmp_repo, storage)
 
@@ -188,7 +188,8 @@ class TestRunPipelineLoadsToStorage:
 
 @pytest.fixture()
 def rich_repo(tmp_path: Path) -> Path:
-    """Create a repository with classes and type annotations for phases 7-11.
+    """
+    Create a repository with classes and type annotations for phases 7-11.
 
     Layout::
 
@@ -261,7 +262,7 @@ class TestRunPipelineFullPhases:
     """Pipeline phases 7-11 populate the corresponding PipelineResult fields."""
 
     def test_run_pipeline_full_phases(
-        self, rich_repo: Path, rich_storage: KuzuBackend
+        self, rich_repo: Path, rich_storage: KuzuBackend,
     ) -> None:
         _, result = run_pipeline(rich_repo, rich_storage)
 
@@ -300,7 +301,7 @@ class TestRunPipelineProgressIncludesNewPhases:
     """Progress callback includes phase names for phases 7-11."""
 
     def test_run_pipeline_progress_includes_new_phases(
-        self, rich_repo: Path, rich_storage: KuzuBackend
+        self, rich_repo: Path, rich_storage: KuzuBackend,
     ) -> None:
         calls: list[tuple[str, float]] = []
 
@@ -345,7 +346,7 @@ class TestRunPipelineEmbeddings:
     """The pipeline's embedding phase fires correctly."""
 
     def test_embedding_phase_in_progress(
-        self, rich_repo: Path, rich_storage: KuzuBackend
+        self, rich_repo: Path, rich_storage: KuzuBackend,
     ) -> None:
         """Progress callback includes 'Generating embeddings' phase."""
         calls: list[tuple[str, float]] = []
@@ -359,7 +360,7 @@ class TestRunPipelineEmbeddings:
         assert "Generating embeddings" in phase_names
 
     def test_result_symbols_set_even_if_embed_fails(
-        self, rich_repo: Path, rich_storage: KuzuBackend
+        self, rich_repo: Path, rich_storage: KuzuBackend,
     ) -> None:
         """result.symbols is correct even when embedding phase raises."""
         from unittest.mock import patch

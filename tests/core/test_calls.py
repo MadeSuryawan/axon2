@@ -19,7 +19,7 @@ from axon.core.ingestion.calls import (
 )
 from axon.core.ingestion.parser_phase import FileParseData
 from axon.core.ingestion.symbol_lookup import build_name_index
-from axon.core.parsers.base import CallInfo, ParseResult, SymbolInfo
+from axon.core.parsers.base import CallInfo, ParseResult
 
 _CALLABLE_LABELS = (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS)
 
@@ -38,7 +38,7 @@ def _add_file_node(graph: KnowledgeGraph, path: str) -> str:
             label=NodeLabel.FILE,
             name=path.rsplit("/", 1)[-1],
             file_path=path,
-        )
+        ),
     )
     return node_id
 
@@ -66,7 +66,7 @@ def _add_symbol_node(
             start_line=start_line,
             end_line=end_line,
             class_name=class_name,
-        )
+        ),
     )
     file_id = generate_id(NodeLabel.FILE, file_path)
     graph.add_relationship(
@@ -75,14 +75,15 @@ def _add_symbol_node(
             type=RelType.DEFINES,
             source=file_id,
             target=node_id,
-        )
+        ),
     )
     return node_id
 
 
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
-    """Build a graph matching the test fixture specification.
+    """
+    Build a graph matching the test fixture specification.
 
     File: src/auth.py
         Function: validate (lines 1-10)
@@ -116,7 +117,8 @@ def graph() -> KnowledgeGraph:
 
 @pytest.fixture()
 def parse_data() -> list[FileParseData]:
-    """Parse data with calls matching the fixture specification.
+    """
+    Parse data with calls matching the fixture specification.
 
     src/auth.py: hash_password() at line 5 (inside validate)
     src/app.py: validate() at line 8 (inside login)
@@ -162,7 +164,7 @@ class TestBuildCallIndex:
 
         # IDs match expected generate_id output.
         expected_validate = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate"
+            NodeLabel.FUNCTION, "src/auth.py", "validate",
         )
         assert index["validate"] == [expected_validate]
 
@@ -202,11 +204,11 @@ class TestResolveCallSameFile:
         call = CallInfo(name="hash_password", line=5)
 
         target_id, confidence = resolve_call(
-            call, "src/auth.py", index, graph
+            call, "src/auth.py", index, graph,
         )
 
         expected_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "hash_password"
+            NodeLabel.FUNCTION, "src/auth.py", "hash_password",
         )
         assert target_id == expected_id
         assert confidence == 1.0
@@ -225,11 +227,11 @@ class TestResolveCallGlobal:
         call = CallInfo(name="validate", line=8)
 
         target_id, confidence = resolve_call(
-            call, "src/app.py", index, graph
+            call, "src/app.py", index, graph,
         )
 
         expected_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate"
+            NodeLabel.FUNCTION, "src/auth.py", "validate",
         )
         assert target_id == expected_id
         assert confidence == 0.5
@@ -248,7 +250,7 @@ class TestResolveCallUnresolved:
         call = CallInfo(name="nonexistent_function", line=3)
 
         target_id, confidence = resolve_call(
-            call, "src/auth.py", index, graph
+            call, "src/auth.py", index, graph,
         )
 
         assert target_id is None
@@ -277,10 +279,10 @@ class TestProcessCallsCreatesRelationships:
         pairs = {(r.source, r.target) for r in calls_rels}
 
         validate_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate"
+            NodeLabel.FUNCTION, "src/auth.py", "validate",
         )
         hash_pw_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "hash_password"
+            NodeLabel.FUNCTION, "src/auth.py", "hash_password",
         )
         login_id = generate_id(NodeLabel.FUNCTION, "src/app.py", "login")
 
@@ -308,10 +310,10 @@ class TestProcessCallsConfidence:
         calls_rels = graph.get_relationships_by_type(RelType.CALLS)
 
         validate_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate"
+            NodeLabel.FUNCTION, "src/auth.py", "validate",
         )
         hash_pw_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "hash_password"
+            NodeLabel.FUNCTION, "src/auth.py", "hash_password",
         )
         login_id = generate_id(NodeLabel.FUNCTION, "src/app.py", "login")
 
@@ -332,7 +334,7 @@ class TestProcessCallsNoDuplicates:
     """Same call twice does not create duplicate edges."""
 
     def test_process_calls_no_duplicates(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         # Two identical calls to hash_password inside validate.
         duplicate_parse_data = [
@@ -399,11 +401,11 @@ class TestResolveMethodCallSelf:
         call = CallInfo(name="check_token", line=10, receiver="self")
 
         target_id, confidence = resolve_call(
-            call, "src/service.py", index, g
+            call, "src/service.py", index, g,
         )
 
         expected_id = generate_id(
-            NodeLabel.METHOD, "src/service.py", "AuthService.check_token"
+            NodeLabel.METHOD, "src/service.py", "AuthService.check_token",
         )
         assert target_id == expected_id
         assert confidence == 1.0
@@ -435,11 +437,11 @@ class TestResolveMethodCallSelf:
         call = CallInfo(name="checkToken", line=10, receiver="this")
 
         target_id, confidence = resolve_call(
-            call, "src/service.ts", index, g
+            call, "src/service.ts", index, g,
         )
 
         expected_id = generate_id(
-            NodeLabel.METHOD, "src/service.ts", "AuthService.checkToken"
+            NodeLabel.METHOD, "src/service.ts", "AuthService.checkToken",
         )
         assert target_id == expected_id
         assert confidence == 1.0
@@ -461,10 +463,10 @@ class TestResolveCallImportResolved:
         _add_file_node(g, "src/app.py")
 
         _add_symbol_node(
-            g, NodeLabel.FUNCTION, "src/auth.py", "validate", 1, 10
+            g, NodeLabel.FUNCTION, "src/auth.py", "validate", 1, 10,
         )
         _add_symbol_node(
-            g, NodeLabel.FUNCTION, "src/app.py", "login", 1, 15
+            g, NodeLabel.FUNCTION, "src/app.py", "login", 1, 15,
         )
 
         # IMPORTS relationship: app.py -> auth.py with symbol "validate"
@@ -477,18 +479,18 @@ class TestResolveCallImportResolved:
                 source=app_file_id,
                 target=auth_file_id,
                 properties={"symbols": "validate"},
-            )
+            ),
         )
 
         index = build_name_index(g, _CALLABLE_LABELS)
         call = CallInfo(name="validate", line=8)
 
         target_id, confidence = resolve_call(
-            call, "src/app.py", index, g
+            call, "src/app.py", index, g,
         )
 
         expected_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate"
+            NodeLabel.FUNCTION, "src/auth.py", "validate",
         )
         assert target_id == expected_id
         assert confidence == 1.0

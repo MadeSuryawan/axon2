@@ -1,4 +1,5 @@
-"""Phase 4: Import resolution for Axon.
+"""
+Phase 4: Import resolution for Axon.
 
 Takes the FileParseData produced by the parsing phase and resolves import
 statements to actual File nodes in the knowledge graph, creating IMPORTS
@@ -25,7 +26,8 @@ logger = logging.getLogger(__name__)
 _JS_TS_EXTENSIONS = (".ts", ".js", ".tsx", ".jsx")
 
 def build_file_index(graph: KnowledgeGraph) -> dict[str, str]:
-    """Build an index mapping file paths to their graph node IDs.
+    """
+    Build an index mapping file paths to their graph node IDs.
 
     Iterates over all :pyclass:`NodeLabel.FILE` nodes in the graph and
     returns a dict keyed by ``file_path`` with node ``id`` as value.
@@ -44,7 +46,8 @@ def resolve_import_path(
     import_info: ImportInfo,
     file_index: dict[str, str],
 ) -> str | None:
-    """Resolve an import statement to the target file's node ID.
+    """
+    Resolve an import statement to the target file's node ID.
 
     Uses the importing file's path, the parsed :class:`ImportInfo`, and the
     index of all known project files to determine which file is being
@@ -73,7 +76,8 @@ def process_imports(
     parse_data: list[FileParseData],
     graph: KnowledgeGraph,
 ) -> None:
-    """Resolve imports and create IMPORTS relationships in the graph.
+    """
+    Resolve imports and create IMPORTS relationships in the graph.
 
     For each file's parsed imports, resolves the target file and creates
     an ``IMPORTS`` relationship from the importing file node to the target
@@ -107,7 +111,7 @@ def process_imports(
                     source=source_file_id,
                     target=target_id,
                     properties={"symbols": ",".join(imp.names)},
-                )
+                ),
             )
 
 def _detect_language(file_path: str) -> str:
@@ -126,7 +130,8 @@ def _resolve_python(
     import_info: ImportInfo,
     file_index: dict[str, str],
 ) -> str | None:
-    """Resolve a Python import to a file node ID.
+    """
+    Resolve a Python import to a file node ID.
 
     Handles:
     - Relative imports (``is_relative=True``): dot-prefixed module paths
@@ -144,7 +149,8 @@ def _resolve_python_relative(
     import_info: ImportInfo,
     file_index: dict[str, str],
 ) -> str | None:
-    """Resolve a relative Python import (``from .foo import bar``).
+    """
+    Resolve a relative Python import (``from .foo import bar``).
 
     The number of leading dots determines how many directory levels to
     traverse upward from the importing file's parent directory.
@@ -179,7 +185,8 @@ def _resolve_python_absolute(
     import_info: ImportInfo,
     file_index: dict[str, str],
 ) -> str | None:
-    """Resolve an absolute Python import (``from mypackage.auth import validate``).
+    """
+    Resolve an absolute Python import (``from mypackage.auth import validate``).
 
     Converts the dotted module path to a filesystem path and looks it up
     in the file index.  Returns ``None`` for external packages not present
@@ -191,7 +198,8 @@ def _resolve_python_absolute(
     return _try_python_paths(target_path, file_index)
 
 def _try_python_paths(base_path: str, file_index: dict[str, str]) -> str | None:
-    """Try common Python file resolution patterns for *base_path*.
+    """
+    Try common Python file resolution patterns for *base_path*.
 
     Checks in order:
     1. ``base_path.py`` (direct module file)
@@ -211,7 +219,8 @@ def _resolve_js_ts(
     import_info: ImportInfo,
     file_index: dict[str, str],
 ) -> str | None:
-    """Resolve a JavaScript/TypeScript import to a file node ID.
+    """
+    Resolve a JavaScript/TypeScript import to a file node ID.
 
     Relative imports (starting with ``./`` or ``../``) are resolved against
     the importing file's directory.  Bare specifiers (e.g. ``'express'``)
@@ -230,7 +239,8 @@ def _resolve_js_ts(
     return _try_js_ts_paths(resolved_str, file_index)
 
 def _try_js_ts_paths(base_path: str, file_index: dict[str, str]) -> str | None:
-    """Try common JS/TS file resolution patterns for *base_path*.
+    """
+    Try common JS/TS file resolution patterns for *base_path*.
 
     Checks in order:
     1. ``base_path`` as-is (already has extension)

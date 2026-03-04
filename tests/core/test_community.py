@@ -40,7 +40,7 @@ def _add_function(
             file_path=file_path,
             start_line=start_line,
             end_line=end_line,
-        )
+        ),
     )
     return node_id
 
@@ -55,7 +55,7 @@ def _add_call(graph: KnowledgeGraph, source_id: str, target_id: str) -> None:
             source=source_id,
             target=target_id,
             properties={"confidence": 1.0},
-        )
+        ),
     )
 
 
@@ -66,7 +66,8 @@ def _add_call(graph: KnowledgeGraph, source_id: str, target_id: str) -> None:
 
 @pytest.fixture()
 def two_cluster_graph() -> KnowledgeGraph:
-    """Build a graph with two clear clusters connected by a single cross-edge.
+    """
+    Build a graph with two clear clusters connected by a single cross-edge.
 
     Cluster 1 (auth): validate, hash_password, check_token
         - validate -> hash_password
@@ -144,13 +145,13 @@ class TestProcessCommunities:
     """process_communities detects clusters and creates graph entities."""
 
     def test_process_communities_creates_nodes(
-        self, two_cluster_graph: KnowledgeGraph
+        self, two_cluster_graph: KnowledgeGraph,
     ) -> None:
         """Community nodes are created in the graph."""
         process_communities(two_cluster_graph)
 
         community_nodes = two_cluster_graph.get_nodes_by_label(
-            NodeLabel.COMMUNITY
+            NodeLabel.COMMUNITY,
         )
         assert len(community_nodes) >= 1
         # Each community node must have the correct label.
@@ -161,13 +162,13 @@ class TestProcessCommunities:
             assert "cohesion" in node.properties
 
     def test_process_communities_creates_member_of(
-        self, two_cluster_graph: KnowledgeGraph
+        self, two_cluster_graph: KnowledgeGraph,
     ) -> None:
         """MEMBER_OF relationships are created from members to communities."""
         process_communities(two_cluster_graph)
 
         member_rels = two_cluster_graph.get_relationships_by_type(
-            RelType.MEMBER_OF
+            RelType.MEMBER_OF,
         )
         assert len(member_rels) >= 2  # At least some members assigned.
 
@@ -185,13 +186,13 @@ class TestProcessCommunities:
             assert source_node.label in callable_labels
 
     def test_process_communities_returns_count(
-        self, two_cluster_graph: KnowledgeGraph
+        self, two_cluster_graph: KnowledgeGraph,
     ) -> None:
         """Return value matches the number of Community nodes created."""
         count = process_communities(two_cluster_graph)
 
         community_nodes = two_cluster_graph.get_nodes_by_label(
-            NodeLabel.COMMUNITY
+            NodeLabel.COMMUNITY,
         )
         assert count == len(community_nodes)
         assert count >= 1
@@ -251,7 +252,7 @@ class TestGenerateLabel:
                 label=NodeLabel.FUNCTION,
                 name="orphan",
                 file_path="",
-            )
+            ),
         )
 
         label = generate_label(g, [node_id])

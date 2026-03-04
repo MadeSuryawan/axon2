@@ -14,7 +14,6 @@ from axon.core.graph.model import (
 )
 from axon.core.ingestion.dead_code import process_dead_code
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -29,7 +28,7 @@ def _add_file_node(graph: KnowledgeGraph, path: str) -> str:
             label=NodeLabel.FILE,
             name=path.rsplit("/", 1)[-1],
             file_path=path,
-        )
+        ),
     )
     return node_id
 
@@ -58,7 +57,7 @@ def _add_symbol_node(
             class_name=class_name,
             is_entry_point=is_entry_point,
             is_exported=is_exported,
-        )
+        ),
     )
     return node_id
 
@@ -76,7 +75,7 @@ def _add_calls_relationship(
             type=RelType.CALLS,
             source=source_id,
             target=target_id,
-        )
+        ),
     )
 
 
@@ -87,7 +86,8 @@ def _add_calls_relationship(
 
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
-    """Build a graph matching the test fixture specification.
+    """
+    Build a graph matching the test fixture specification.
 
     - Function:src/main.py:main         (entry point, no incoming calls)
     - Function:src/auth.py:validate     (has incoming calls from main)
@@ -107,13 +107,13 @@ def graph() -> KnowledgeGraph:
 
     # Symbols
     main_id = _add_symbol_node(
-        g, NodeLabel.FUNCTION, "src/main.py", "main", is_entry_point=True
+        g, NodeLabel.FUNCTION, "src/main.py", "main", is_entry_point=True,
     )
     validate_id = _add_symbol_node(
-        g, NodeLabel.FUNCTION, "src/auth.py", "validate"
+        g, NodeLabel.FUNCTION, "src/auth.py", "validate",
     )
     _add_symbol_node(
-        g, NodeLabel.FUNCTION, "src/auth.py", "unused_helper"
+        g, NodeLabel.FUNCTION, "src/auth.py", "unused_helper",
     )
     _add_symbol_node(
         g,
@@ -123,10 +123,10 @@ def graph() -> KnowledgeGraph:
         class_name="User",
     )
     _add_symbol_node(
-        g, NodeLabel.FUNCTION, "src/tests/test_auth.py", "test_validate"
+        g, NodeLabel.FUNCTION, "src/tests/test_auth.py", "test_validate",
     )
     _add_symbol_node(
-        g, NodeLabel.FUNCTION, "src/utils.py", "orphan_function"
+        g, NodeLabel.FUNCTION, "src/utils.py", "orphan_function",
     )
 
     # CALLS: main -> validate
@@ -147,7 +147,7 @@ class TestDetectsUnusedFunction:
         process_dead_code(graph)
 
         unused_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "unused_helper"
+            NodeLabel.FUNCTION, "src/auth.py", "unused_helper",
         )
         node = graph.get_node(unused_id)
         assert node is not None
@@ -173,7 +173,7 @@ class TestSkipsCalledFunctions:
         process_dead_code(graph)
 
         validate_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate"
+            NodeLabel.FUNCTION, "src/auth.py", "validate",
         )
         node = graph.get_node(validate_id)
         assert node is not None
@@ -187,7 +187,7 @@ class TestSkipsConstructors:
         process_dead_code(graph)
 
         init_id = generate_id(
-            NodeLabel.METHOD, "src/models.py", "User.__init__"
+            NodeLabel.METHOD, "src/models.py", "User.__init__",
         )
         node = graph.get_node(init_id)
         assert node is not None
@@ -201,7 +201,7 @@ class TestSkipsTestFunctions:
         process_dead_code(graph)
 
         test_id = generate_id(
-            NodeLabel.FUNCTION, "src/tests/test_auth.py", "test_validate"
+            NodeLabel.FUNCTION, "src/tests/test_auth.py", "test_validate",
         )
         node = graph.get_node(test_id)
         assert node is not None
@@ -232,10 +232,10 @@ class TestSkipsDunderMethods:
         process_dead_code(g)
 
         str_id = generate_id(
-            NodeLabel.METHOD, "src/models.py", "User.__str__"
+            NodeLabel.METHOD, "src/models.py", "User.__str__",
         )
         repr_id = generate_id(
-            NodeLabel.METHOD, "src/models.py", "User.__repr__"
+            NodeLabel.METHOD, "src/models.py", "User.__repr__",
         )
 
         str_node = g.get_node(str_id)
@@ -285,7 +285,7 @@ def _add_uses_type_relationship(
             type=RelType.USES_TYPE,
             source=source_id,
             target=target_id,
-        )
+        ),
     )
 
 
@@ -303,7 +303,7 @@ class TestSkipsTypeReferencedClasses:
         _add_file_node(g, "src/handler.py")
 
         class_id = _add_symbol_node(
-            g, NodeLabel.CLASS, "src/models.py", "Status"
+            g, NodeLabel.CLASS, "src/models.py", "Status",
         )
         func_id = _add_symbol_node(
             g, NodeLabel.FUNCTION, "src/handler.py", "handle",
@@ -324,7 +324,7 @@ class TestSkipsTypeReferencedClasses:
         _add_file_node(g, "src/handler.py")
 
         func_id = _add_symbol_node(
-            g, NodeLabel.FUNCTION, "src/utils.py", "unused_func"
+            g, NodeLabel.FUNCTION, "src/utils.py", "unused_func",
         )
         other_id = _add_symbol_node(
             g, NodeLabel.FUNCTION, "src/handler.py", "handle",
@@ -351,7 +351,7 @@ class TestSkipsFrameworkDecoratedFunctions:
         g = KnowledgeGraph()
         _add_file_node(g, "src/server.py")
         node_id = _add_symbol_node(
-            g, NodeLabel.FUNCTION, "src/server.py", "list_tools"
+            g, NodeLabel.FUNCTION, "src/server.py", "list_tools",
         )
         node = g.get_node(node_id)
         assert node is not None
@@ -366,7 +366,7 @@ class TestSkipsFrameworkDecoratedFunctions:
         g = KnowledgeGraph()
         _add_file_node(g, "src/utils.py")
         node_id = _add_symbol_node(
-            g, NodeLabel.FUNCTION, "src/utils.py", "unused"
+            g, NodeLabel.FUNCTION, "src/utils.py", "unused",
         )
         node = g.get_node(node_id)
         assert node is not None
@@ -381,7 +381,7 @@ class TestSkipsFrameworkDecoratedFunctions:
         g = KnowledgeGraph()
         _add_file_node(g, "src/utils.py")
         node_id = _add_symbol_node(
-            g, NodeLabel.FUNCTION, "src/utils.py", "overloaded"
+            g, NodeLabel.FUNCTION, "src/utils.py", "overloaded",
         )
         node = g.get_node(node_id)
         assert node is not None
@@ -396,7 +396,7 @@ class TestSkipsFrameworkDecoratedFunctions:
         g = KnowledgeGraph()
         _add_file_node(g, "src/utils.py")
         node_id = _add_symbol_node(
-            g, NodeLabel.FUNCTION, "src/utils.py", "wrapper"
+            g, NodeLabel.FUNCTION, "src/utils.py", "wrapper",
         )
         node = g.get_node(node_id)
         assert node is not None
@@ -423,7 +423,7 @@ class TestProtocolConformance:
 
         # Protocol class with is_protocol annotation
         proto_id = _add_symbol_node(
-            g, NodeLabel.CLASS, "src/base.py", "StorageBackend"
+            g, NodeLabel.CLASS, "src/base.py", "StorageBackend",
         )
         proto_node = g.get_node(proto_id)
         assert proto_node is not None
@@ -441,7 +441,7 @@ class TestProtocolConformance:
 
         # Concrete class structurally conforming (has both methods)
         _add_symbol_node(
-            g, NodeLabel.CLASS, "src/impl.py", "KuzuBackend"
+            g, NodeLabel.CLASS, "src/impl.py", "KuzuBackend",
         )
         impl_init_id = _add_symbol_node(
             g, NodeLabel.METHOD, "src/impl.py", "initialize",
@@ -477,7 +477,7 @@ class TestProtocolConformance:
         _add_file_node(g, "src/partial.py")
 
         proto_id = _add_symbol_node(
-            g, NodeLabel.CLASS, "src/base.py", "Backend"
+            g, NodeLabel.CLASS, "src/base.py", "Backend",
         )
         proto_node = g.get_node(proto_id)
         assert proto_node is not None
@@ -494,7 +494,7 @@ class TestProtocolConformance:
 
         # Partial class only has "initialize", not "close"
         _add_symbol_node(
-            g, NodeLabel.CLASS, "src/partial.py", "Partial"
+            g, NodeLabel.CLASS, "src/partial.py", "Partial",
         )
         partial_method_id = _add_symbol_node(
             g, NodeLabel.METHOD, "src/partial.py", "initialize",

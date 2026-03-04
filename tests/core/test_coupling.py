@@ -14,7 +14,6 @@ from axon.core.ingestion.coupling import (
     process_coupling,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -22,7 +21,8 @@ from axon.core.ingestion.coupling import (
 
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
-    """Return a KnowledgeGraph pre-populated with File nodes.
+    """
+    Return a KnowledgeGraph pre-populated with File nodes.
 
     Layout:
     - File:src/auth.py
@@ -39,7 +39,7 @@ def graph() -> KnowledgeGraph:
                 label=NodeLabel.FILE,
                 name=path.split("/")[-1],
                 file_path=path,
-            )
+            ),
         )
 
     return g
@@ -105,7 +105,7 @@ class TestCalculateCoupling:
         """Coupling = co_changes / max(total_a, total_b)."""
         total_changes = {"src/auth.py": 10, "src/models.py": 5}
         strength = calculate_coupling(
-            "src/auth.py", "src/models.py", co_changes=5, total_changes=total_changes
+            "src/auth.py", "src/models.py", co_changes=5, total_changes=total_changes,
         )
         # 5 / max(10, 5) = 5 / 10 = 0.5
         assert strength == pytest.approx(0.5)
@@ -114,7 +114,7 @@ class TestCalculateCoupling:
         """When both files have equal total changes, coupling = co_changes / total."""
         total_changes = {"src/auth.py": 8, "src/models.py": 8}
         strength = calculate_coupling(
-            "src/auth.py", "src/models.py", co_changes=6, total_changes=total_changes
+            "src/auth.py", "src/models.py", co_changes=6, total_changes=total_changes,
         )
         # 6 / max(8, 8) = 6 / 8 = 0.75
         assert strength == pytest.approx(0.75)
@@ -129,7 +129,7 @@ class TestProcessCoupling:
     """process_coupling creates COUPLED_WITH relationships in the graph."""
 
     def test_process_coupling_creates_relationships(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         """Mock git log via the commits parameter, verify COUPLED_WITH edges."""
         # auth.py and models.py change together 4 times out of 5 commits each.
@@ -188,7 +188,7 @@ class TestProcessCoupling:
         assert len(coupled_rels) == 0
 
     def test_process_coupling_filters_weak_pairs(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         """Pairs below min_strength are not added to the graph."""
         # auth changes 10 times, models 10 times, but they co-change only twice.
@@ -219,7 +219,7 @@ class TestProcessCoupling:
         assert count == 0
 
     def test_process_coupling_relationship_id_format(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         """Relationship IDs follow the coupled:{id_a}->{id_b} pattern."""
         commits = [

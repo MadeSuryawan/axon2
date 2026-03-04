@@ -1,4 +1,5 @@
-"""Phase 5: Call tracing for Axon.
+"""
+Phase 5: Call tracing for Axon.
 
 Takes FileParseData from the parser phase and resolves call expressions to
 target symbol nodes, creating CALLS relationships with confidence scores.
@@ -22,7 +23,11 @@ from axon.core.graph.model import (
     generate_id,
 )
 from axon.core.ingestion.parser_phase import FileParseData
-from axon.core.ingestion.symbol_lookup import build_file_symbol_index, build_name_index, find_containing_symbol
+from axon.core.ingestion.symbol_lookup import (
+    build_file_symbol_index,
+    build_name_index,
+    find_containing_symbol,
+)
 from axon.core.parsers.base import CallInfo
 
 logger = logging.getLogger(__name__)
@@ -82,7 +87,8 @@ def resolve_call(
     call_index: dict[str, list[str]],
     graph: KnowledgeGraph,
 ) -> tuple[str | None, float]:
-    """Resolve a call expression to a target node ID and confidence score.
+    """
+    Resolve a call expression to a target node ID and confidence score.
 
     Resolution strategy (tried in order):
 
@@ -143,7 +149,8 @@ def _resolve_self_method(
     call_index: dict[str, list[str]],
     graph: KnowledgeGraph,
 ) -> str | None:
-    """Find a method with *method_name* in the same file (same class).
+    """
+    Find a method with *method_name* in the same file (same class).
 
     When the receiver is ``self`` or ``this`` the target must be a Method
     node defined in the same file.
@@ -164,7 +171,8 @@ def _resolve_via_imports(
     candidate_ids: list[str],
     graph: KnowledgeGraph,
 ) -> str | None:
-    """Check if *name* was imported into *file_path* and resolve to the target.
+    """
+    Check if *name* was imported into *file_path* and resolve to the target.
 
     Looks at IMPORTS relationships originating from this file's File node.
     For each imported file, checks whether any candidate symbol is defined
@@ -199,7 +207,8 @@ def _resolve_via_imports(
     return None
 
 def _pick_closest(candidate_ids: list[str], graph: KnowledgeGraph) -> str | None:
-    """Pick the candidate with the shortest file path (proximity heuristic).
+    """
+    Pick the candidate with the shortest file path (proximity heuristic).
 
     Returns ``None`` if no candidates can be resolved to actual nodes.
     """
@@ -232,7 +241,7 @@ def _add_calls_edge(
                 source=source_id,
                 target=target_id,
                 properties={"confidence": confidence},
-            )
+            ),
         )
 
 def _resolve_receiver_method(
@@ -244,7 +253,8 @@ def _resolve_receiver_method(
     graph: KnowledgeGraph,
     seen: set[str],
 ) -> None:
-    """Resolve ``Receiver.method()`` to the METHOD node and create a CALLS edge.
+    """
+    Resolve ``Receiver.method()`` to the METHOD node and create a CALLS edge.
 
     Looks for a METHOD node whose ``name`` matches *method_name* and whose
     ``class_name`` matches *receiver*.  Searches same-file first, then
@@ -275,7 +285,8 @@ def process_calls(
     parse_data: list[FileParseData],
     graph: KnowledgeGraph,
 ) -> None:
-    """Resolve call expressions and create CALLS relationships in the graph.
+    """
+    Resolve call expressions and create CALLS relationships in the graph.
 
     For each call expression in the parse data:
 
@@ -304,7 +315,7 @@ def process_calls(
                 continue
 
             source_id = find_containing_symbol(
-                call.line, fpd.file_path, file_sym_index
+                call.line, fpd.file_path, file_sym_index,
             )
             if source_id is None:
                 logger.debug(
@@ -316,7 +327,7 @@ def process_calls(
                 continue
 
             target_id, confidence = resolve_call(
-                call, fpd.file_path, call_index, graph
+                call, fpd.file_path, call_index, graph,
             )
             if target_id is not None:
                 _add_calls_edge(source_id, target_id, confidence, graph, seen)
@@ -328,7 +339,7 @@ def process_calls(
                     continue
                 arg_call = CallInfo(name=arg_name, line=call.line)
                 arg_id, arg_conf = resolve_call(
-                    arg_call, fpd.file_path, call_index, graph
+                    arg_call, fpd.file_path, call_index, graph,
                 )
                 if arg_id is not None:
                     _add_calls_edge(source_id, arg_id, arg_conf * 0.8, graph, seen)
@@ -338,7 +349,7 @@ def process_calls(
             if receiver and receiver not in ("self", "this"):
                 receiver_call = CallInfo(name=receiver, line=call.line)
                 recv_id, recv_conf = resolve_call(
-                    receiver_call, fpd.file_path, call_index, graph
+                    receiver_call, fpd.file_path, call_index, graph,
                 )
                 if recv_id is not None:
                     _add_calls_edge(source_id, recv_id, recv_conf, graph, seen)
@@ -371,13 +382,13 @@ def process_calls(
                 base_name = dec_name.rsplit(".", 1)[-1] if "." in dec_name else dec_name
                 call_obj = CallInfo(name=base_name, line=symbol.start_line)
                 target_id, confidence = resolve_call(
-                    call_obj, fpd.file_path, call_index, graph
+                    call_obj, fpd.file_path, call_index, graph,
                 )
                 if target_id is None and "." in dec_name:
                     # Try full dotted name as well.
                     call_obj = CallInfo(name=dec_name, line=symbol.start_line)
                     target_id, confidence = resolve_call(
-                        call_obj, fpd.file_path, call_index, graph
+                        call_obj, fpd.file_path, call_index, graph,
                     )
                 if target_id is None:
                     continue
@@ -394,5 +405,5 @@ def process_calls(
                         source=source_id,
                         target=target_id,
                         properties={"confidence": confidence},
-                    )
+                    ),
                 )

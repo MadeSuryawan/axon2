@@ -1,4 +1,5 @@
-"""Tests for embedding text generation (Task 23).
+"""
+Tests for embedding text generation (Task 23).
 
 Verifies that ``generate_text`` produces a structured natural-language
 description for every supported node type, capturing relevant graph
@@ -7,8 +8,7 @@ context (edges, neighbours, signatures, etc.).
 
 from __future__ import annotations
 
-import pytest
-
+from axon.core.embeddings.text import generate_text
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import (
     GraphNode,
@@ -17,8 +17,6 @@ from axon.core.graph.model import (
     RelType,
     generate_id,
 )
-from axon.core.embeddings.text import generate_text
-
 
 # ---------------------------------------------------------------------------
 # Helpers

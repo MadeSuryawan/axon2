@@ -1,4 +1,5 @@
-"""Base parser interface and shared data structures.
+"""
+Base parser interface and shared data structures.
 
 Defines the intermediate representation produced by language-specific parsers
 before the data is mapped into the knowledge graph.
@@ -8,6 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+
 
 @dataclass
 class SymbolInfo:
@@ -58,7 +60,7 @@ class ParseResult:
     calls: list[CallInfo] = field(default_factory=list)
     type_refs: list[TypeRef] = field(default_factory=list)
     heritage: list[tuple[str, str, str]] = field(
-        default_factory=list
+        default_factory=list,
     )  # (class_name, kind, parent_name) where kind is "extends" or "implements"
     exports: list[str] = field(default_factory=list)  # names from __all__ or export statements
 

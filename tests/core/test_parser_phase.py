@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from axon.core.graph.graph import KnowledgeGraph
-from axon.core.graph.model import NodeLabel, RelType, generate_id, GraphNode
+from axon.core.graph.model import GraphNode, NodeLabel, RelType, generate_id
 from axon.core.ingestion.parser_phase import (
     FileParseData,
     get_parser,
@@ -15,7 +15,6 @@ from axon.core.ingestion.parser_phase import (
 from axon.core.ingestion.walker import FileEntry
 from axon.core.parsers.python_lang import PythonParser
 from axon.core.parsers.typescript import TypeScriptParser
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -35,7 +34,7 @@ def graph() -> KnowledgeGraph:
             name="utils.py",
             file_path="src/utils.py",
             language="python",
-        )
+        ),
     )
 
     # TypeScript file node
@@ -46,7 +45,7 @@ def graph() -> KnowledgeGraph:
             name="app.ts",
             file_path="src/app.ts",
             language="typescript",
-        )
+        ),
     )
 
     return g
@@ -88,7 +87,7 @@ function add(a, b) {
 
 
 def _make_file_entry(
-    path: str, content: str, language: str
+    path: str, content: str, language: str,
 ) -> FileEntry:
     return FileEntry(path=path, content=content, language=language)
 
@@ -185,7 +184,7 @@ class TestProcessParsingCreatesFunctionNodes:
     """process_parsing creates Function nodes in the graph."""
 
     def test_process_parsing_creates_function_nodes(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         files = [_make_file_entry("src/utils.py", PYTHON_CODE, "python")]
         process_parsing(files, graph)
@@ -213,7 +212,7 @@ class TestProcessParsingCreatesClassNodes:
     """process_parsing creates Class nodes in the graph."""
 
     def test_process_parsing_creates_class_nodes(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         files = [_make_file_entry("src/utils.py", PYTHON_CODE, "python")]
         process_parsing(files, graph)
@@ -236,7 +235,7 @@ class TestProcessParsingCreatesMethodNodes:
     """process_parsing creates Method nodes with class_name set."""
 
     def test_process_parsing_creates_method_nodes(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         files = [_make_file_entry("src/utils.py", PYTHON_CODE, "python")]
         process_parsing(files, graph)
@@ -247,7 +246,7 @@ class TestProcessParsingCreatesMethodNodes:
         assert "delete_user" in method_names
 
     def test_method_nodes_have_class_name(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         files = [_make_file_entry("src/utils.py", PYTHON_CODE, "python")]
         process_parsing(files, graph)
@@ -257,13 +256,13 @@ class TestProcessParsingCreatesMethodNodes:
             assert method.class_name == "UserService"
 
     def test_method_node_id_uses_class_dot_method(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         files = [_make_file_entry("src/utils.py", PYTHON_CODE, "python")]
         process_parsing(files, graph)
 
         method_id = generate_id(
-            NodeLabel.METHOD, "src/utils.py", "UserService.get_user"
+            NodeLabel.METHOD, "src/utils.py", "UserService.get_user",
         )
         node = graph.get_node(method_id)
         assert node is not None
@@ -274,7 +273,7 @@ class TestProcessParsingCreatesDefinesRelationships:
     """process_parsing creates DEFINES relationships from File to Symbol."""
 
     def test_process_parsing_creates_defines_relationships(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         files = [_make_file_entry("src/utils.py", PYTHON_CODE, "python")]
         process_parsing(files, graph)
@@ -288,7 +287,7 @@ class TestProcessParsingCreatesDefinesRelationships:
             assert rel.source == file_id
 
     def test_defines_relationship_targets_symbol(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         files = [_make_file_entry("src/utils.py", PYTHON_CODE, "python")]
         process_parsing(files, graph)
@@ -305,7 +304,7 @@ class TestProcessParsingCreatesDefinesRelationships:
         assert class_id in target_ids
 
     def test_defines_relationship_id_format(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         files = [_make_file_entry("src/utils.py", PYTHON_CODE, "python")]
         process_parsing(files, graph)
@@ -320,7 +319,7 @@ class TestProcessParsingReturnsParseData:
     """process_parsing returns FileParseData for use by later phases."""
 
     def test_process_parsing_returns_parse_data(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         files = [
             _make_file_entry("src/utils.py", PYTHON_CODE, "python"),
@@ -332,7 +331,7 @@ class TestProcessParsingReturnsParseData:
         assert all(isinstance(d, FileParseData) for d in result)
 
     def test_parse_data_carries_imports(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         code_with_import = "import os\n\ndef main():\n    pass\n"
         graph.add_node(
@@ -342,7 +341,7 @@ class TestProcessParsingReturnsParseData:
                 name="main.py",
                 file_path="src/main.py",
                 language="python",
-            )
+            ),
         )
         files = [_make_file_entry("src/main.py", code_with_import, "python")]
         result = process_parsing(files, graph)
@@ -350,7 +349,7 @@ class TestProcessParsingReturnsParseData:
         assert len(result[0].parse_result.imports) > 0
 
     def test_parse_data_carries_calls(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         code_with_call = "def foo():\n    bar()\n"
         graph.add_node(
@@ -360,7 +359,7 @@ class TestProcessParsingReturnsParseData:
                 name="caller.py",
                 file_path="src/caller.py",
                 language="python",
-            )
+            ),
         )
         files = [_make_file_entry("src/caller.py", code_with_call, "python")]
         result = process_parsing(files, graph)
@@ -373,7 +372,7 @@ class TestProcessParsingHandlesError:
     """process_parsing handles bad content gracefully without crashing."""
 
     def test_process_parsing_handles_error(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         # Provide an unsupported language to trigger the error path.
         graph.add_node(
@@ -383,7 +382,7 @@ class TestProcessParsingHandlesError:
                 name="bad.rs",
                 file_path="src/bad.rs",
                 language="rust",
-            )
+            ),
         )
         files = [_make_file_entry("src/bad.rs", "fn main() {}", "rust")]
         result = process_parsing(files, graph)
@@ -394,7 +393,7 @@ class TestProcessParsingHandlesError:
         assert result[0].parse_result.imports == []
 
     def test_error_does_not_affect_other_files(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         graph.add_node(
             GraphNode(
@@ -403,7 +402,7 @@ class TestProcessParsingHandlesError:
                 name="bad.rs",
                 file_path="src/bad.rs",
                 language="rust",
-            )
+            ),
         )
         files = [
             _make_file_entry("src/bad.rs", "fn main() {}", "rust"),
@@ -430,7 +429,7 @@ class TestProcessParsingTypeScript:
         assert "Config" in iface_names
 
     def test_creates_ts_class_and_method_nodes(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         files = [_make_file_entry("src/app.ts", TYPESCRIPT_CODE, "typescript")]
         process_parsing(files, graph)

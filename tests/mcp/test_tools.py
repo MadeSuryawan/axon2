@@ -1,4 +1,5 @@
-"""Tests for Axon MCP tool handlers.
+"""
+Tests for Axon MCP tool handlers.
 
 All tests mock the storage backend to avoid needing a real database.
 Each tool handler is tested for both success and edge-case paths.
@@ -7,8 +8,6 @@ Each tool handler is tested for both success and edge-case paths.
 from __future__ import annotations
 
 import json
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,7 +26,6 @@ from axon.mcp.tools import (
     handle_list_repos,
     handle_query,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -1,4 +1,5 @@
-"""Shared symbol lookup utilities for ingestion phases.
+"""
+Shared symbol lookup utilities for ingestion phases.
 
 Provides efficient line-based containment lookups using a pre-built
 per-file interval index, replacing the O(N) scan approach with
@@ -11,14 +12,15 @@ import bisect
 from collections import defaultdict
 
 from axon.core.graph.graph import KnowledgeGraph
-from axon.core.graph.model import GraphNode, NodeLabel
+from axon.core.graph.model import NodeLabel
 
 
 def build_name_index(
     graph: KnowledgeGraph,
     labels: tuple[NodeLabel, ...],
 ) -> dict[str, list[str]]:
-    """Build a mapping from symbol names to their node IDs.
+    """
+    Build a mapping from symbol names to their node IDs.
 
     Iterates over all nodes matching the given *labels* and groups
     them by name.  Multiple symbols can share the same name across
@@ -35,7 +37,8 @@ def build_name_index(
 
 
 class FileSymbolIndex:
-    """Pre-built per-file interval index for fast containment lookups.
+    """
+    Pre-built per-file interval index for fast containment lookups.
 
     Stores ``(start_line, end_line, span, node_id)`` tuples sorted by
     ``start_line`` alongside a pre-computed ``start_lines`` list for
@@ -62,7 +65,8 @@ def build_file_symbol_index(
     graph: KnowledgeGraph,
     labels: tuple[NodeLabel, ...],
 ) -> FileSymbolIndex:
-    """Build a per-file sorted interval index for fast containment lookups.
+    """
+    Build a per-file sorted interval index for fast containment lookups.
 
     For each file, symbols are stored as ``(start_line, end_line, span, node_id)``
     tuples sorted by ``start_line``.  A pre-computed ``start_lines`` list per file
@@ -82,7 +86,7 @@ def build_file_symbol_index(
             if node.file_path and node.start_line > 0:
                 span = node.end_line - node.start_line
                 entries[node.file_path].append(
-                    (node.start_line, node.end_line, span, node.id)
+                    (node.start_line, node.end_line, span, node.id),
                 )
 
     for file_entries in entries.values():
@@ -99,7 +103,8 @@ def find_containing_symbol(
     file_path: str,
     file_symbol_index: FileSymbolIndex,
 ) -> str | None:
-    """Find the most specific symbol whose line range contains *line*.
+    """
+    Find the most specific symbol whose line range contains *line*.
 
     Uses binary search on the pre-built index for O(log N) lookup instead
     of scanning all nodes.

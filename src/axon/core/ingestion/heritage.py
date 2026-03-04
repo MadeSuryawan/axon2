@@ -1,4 +1,5 @@
-"""Phase 6: Heritage extraction for Axon.
+"""
+Phase 6: Heritage extraction for Axon.
 
 Takes FileParseData from the parser phase and creates EXTENDS / IMPLEMENTS
 relationships between Class and Interface nodes in the knowledge graph.
@@ -37,7 +38,8 @@ def _resolve_node(
     symbol_index: dict[str, list[str]],
     graph: KnowledgeGraph,
 ) -> str | None:
-    """Resolve a symbol *name* to a node ID, preferring same-file matches.
+    """
+    Resolve a symbol *name* to a node ID, preferring same-file matches.
 
     1. Check whether the global index contains *name*.
     2. Prefer any candidate defined in the same *file_path*.
@@ -61,7 +63,8 @@ def process_heritage(
     parse_data: list[FileParseData],
     graph: KnowledgeGraph,
 ) -> None:
-    """Create EXTENDS and IMPLEMENTS relationships from heritage tuples.
+    """
+    Create EXTENDS and IMPLEMENTS relationships from heritage tuples.
 
     For each ``(class_name, kind, parent_name)`` tuple in the parse results:
 
@@ -90,10 +93,10 @@ def process_heritage(
                 continue
 
             child_id = _resolve_node(
-                class_name, fpd.file_path, symbol_index, graph
+                class_name, fpd.file_path, symbol_index, graph,
             )
             parent_id = _resolve_node(
-                parent_name, fpd.file_path, symbol_index, graph
+                parent_name, fpd.file_path, symbol_index, graph,
             )
 
             if child_id is None:
@@ -137,5 +140,5 @@ def process_heritage(
                     type=rel_type,
                     source=child_id,
                     target=parent_id,
-                )
+                ),
             )

@@ -1,4 +1,5 @@
-"""Watch mode for Axon — re-indexes on file changes.
+"""
+Watch mode for Axon — re-indexes on file changes.
 
 Uses ``watchfiles`` (Rust-backed) for efficient file system monitoring with
 native debouncing.  Changes are processed in tiers:
@@ -18,10 +19,18 @@ import subprocess
 import time
 from pathlib import Path
 
+import watchfiles
+
 from axon.config.ignore import load_gitignore, should_ignore
 from axon.config.languages import is_supported
+from axon.core.embeddings.embedder import embed_nodes
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import NodeLabel, RelType
+from axon.core.ingestion.community import process_communities
+from axon.core.ingestion.coupling import process_coupling
+from axon.core.ingestion.dead_code import process_dead_code
+from axon.core.ingestion.pipeline import reindex_files
+from axon.core.ingestion.processes import process_processes
 from axon.core.ingestion.walker import FileEntry, read_file
 from axon.core.storage.base import StorageBackend
 
@@ -42,16 +51,17 @@ def _get_head_sha(repo_path: Path) -> str | None:
     """Return the current git HEAD sha, or None if not in a git repo."""
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "rev-parse", "HEAD"],  # noqa: S607
             cwd=repo_path,
             capture_output=True,
             text=True,
             timeout=5,
+            check=True,
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except Exception:
-        pass
+    except (RuntimeError, subprocess.CalledProcessError, FileNotFoundError):
+        logger.debug("Failed to get git HEAD sha", exc_info=True)
     return None
 
 
@@ -61,11 +71,11 @@ def _reindex_files(
     storage: StorageBackend,
     gitignore_patterns: list[str] | None = None,
 ) -> tuple[int, set[str]]:
-    """Re-index changed files through file-local phases.
+    """
+    Re-index changed files through file-local phases.
 
     Returns (count_reindexed, set_of_relative_file_paths_reindexed).
     """
-    from axon.core.ingestion.pipeline import reindex_files
 
     entries: list[FileEntry] = []
     reindexed_paths: set[str] = set()
@@ -126,11 +136,6 @@ def _run_incremental_global_phases(
     run_coupling: bool = False,
 ) -> None:
     """Run global phases incrementally using graph hydrated from storage."""
-    from axon.core.ingestion.community import process_communities
-    from axon.core.ingestion.coupling import process_coupling
-    from axon.core.ingestion.dead_code import process_dead_code
-    from axon.core.ingestion.processes import process_processes
-    from axon.core.embeddings.embedder import embed_nodes
 
     storage.delete_synthetic_nodes()
 
@@ -145,13 +150,11 @@ def _run_incremental_global_phases(
     num_dead = process_dead_code(graph)
     logger.info("Dead code: %d", num_dead)
 
-    new_nodes = (
-        list(graph.get_nodes_by_label(NodeLabel.COMMUNITY))
-        + list(graph.get_nodes_by_label(NodeLabel.PROCESS))
+    new_nodes = list(graph.get_nodes_by_label(NodeLabel.COMMUNITY)) + list(
+        graph.get_nodes_by_label(NodeLabel.PROCESS),
     )
-    new_rels = (
-        list(graph.get_relationships_by_type(RelType.MEMBER_OF))
-        + list(graph.get_relationships_by_type(RelType.STEP_IN_PROCESS))
+    new_rels = list(graph.get_relationships_by_type(RelType.MEMBER_OF)) + list(
+        graph.get_relationships_by_type(RelType.STEP_IN_PROCESS),
     )
     if new_nodes:
         storage.add_nodes(new_nodes)
@@ -192,14 +195,14 @@ async def watch_repo(
     stop_event: asyncio.Event | None = None,
     lock: asyncio.Lock | None = None,
 ) -> None:
-    """Main watch loop — monitor files and re-index on changes.
+    """
+    Watch loop — monitor files and re-index on changes.
 
     File-local reindex runs immediately on every change. Global phases
     (communities, processes, dead code, embeddings) run after a quiet
     period of QUIET_PERIOD seconds with no new changes. Coupling runs
     only when new git commits are detected.
     """
-    import watchfiles
 
     async def _run_sync(fn, *args):
         if lock is not None:
@@ -232,7 +235,11 @@ async def watch_repo(
 
         if changed_paths:
             count, reindexed = await _run_sync(
-                _reindex_files, changed_paths, repo_path, storage, gitignore,
+                _reindex_files,
+                changed_paths,
+                repo_path,
+                storage,
+                gitignore,
             )
             if reindexed:
                 dirty_files |= reindexed
@@ -245,11 +252,7 @@ async def watch_repo(
         now = time.monotonic()
         quiet_elapsed = last_change_time > 0 and (now - last_change_time) >= QUIET_PERIOD
         starvation = first_dirty_time > 0 and (now - first_dirty_time) >= MAX_DIRTY_AGE
-        if (
-            dirty_files
-            and not global_lock.locked()
-            and (quiet_elapsed or starvation)
-        ):
+        if dirty_files and not global_lock.locked() and (quiet_elapsed or starvation):
             snapshot = dirty_files.copy()
             dirty_files.clear()
             first_dirty_time = 0.0
@@ -264,7 +267,10 @@ async def watch_repo(
                     logger.info("Running incremental global phases...")
                     await _run_sync(
                         _run_incremental_global_phases,
-                        storage, repo_path, snapshot, run_coupling,
+                        storage,
+                        repo_path,
+                        snapshot,
+                        run_coupling,
                     )
             except Exception:
                 logger.exception("Global phases failed; re-queueing dirty files")

@@ -10,7 +10,6 @@ from axon.core.graph.model import (
     RelType,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -255,8 +254,8 @@ class TestFormatDiffModifiedNodes:
     def test_modified(self) -> None:
         diff = StructuralDiff(
             modified_nodes=[
-                (_node("n1", name="changed_func"), _node("n1", name="changed_func"))
-            ]
+                (_node("n1", name="changed_func"), _node("n1", name="changed_func")),
+            ],
         )
         result = format_diff(diff)
 

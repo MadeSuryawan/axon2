@@ -20,7 +20,6 @@ from axon.core.ingestion.processes import (
     trace_flow,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -65,7 +64,7 @@ def _add_call(
             source=source.id,
             target=target.id,
             properties={"confidence": confidence},
-        )
+        ),
     )
 
 
@@ -82,7 +81,7 @@ def _add_member_of(
             type=RelType.MEMBER_OF,
             source=node.id,
             target=community_id,
-        )
+        ),
     )
 
 
@@ -98,7 +97,8 @@ def _add_member_of(
 
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
-    """Build a graph matching the specification.
+    """
+    Build a graph matching the specification.
 
     - main() calls validate()
     - validate() calls hash_password() and query_db()
@@ -277,7 +277,7 @@ class TestGenerateProcessLabel:
         nodes = [
             GraphNode(id=f"n{i}", label=NodeLabel.FUNCTION, name=name)
             for i, name in enumerate(
-                ["main", "validate", "hash_password", "query_db", "format_result"]
+                ["main", "validate", "hash_password", "query_db", "format_result"],
             )
         ]
         label = generate_process_label(nodes)
@@ -341,7 +341,7 @@ class TestProcessProcessesCreatesNodes:
     """process_processes creates Process nodes in the graph."""
 
     def test_process_processes_creates_nodes(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         process_processes(graph)
 
@@ -363,7 +363,7 @@ class TestProcessProcessesCreatesSteps:
     """STEP_IN_PROCESS relationships are created with step numbers."""
 
     def test_process_processes_creates_steps(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         process_processes(graph)
 
@@ -395,7 +395,7 @@ class TestProcessProcessesReturnsCount:
     """process_processes returns the correct count of processes created."""
 
     def test_process_processes_returns_count(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         count = process_processes(graph)
 

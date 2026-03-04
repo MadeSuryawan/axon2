@@ -1,4 +1,5 @@
-"""Phase 10: Dead code detection for Axon.
+"""
+Phase 10: Dead code detection for Axon.
 
 Scans the knowledge graph to find unreachable symbols (functions, methods,
 classes) that have zero incoming CALLS relationships and are not entry points,
@@ -24,7 +25,8 @@ _SYMBOL_LABELS: tuple[NodeLabel, ...] = (
 _CONSTRUCTOR_NAMES: frozenset[str] = frozenset({"__init__", "__new__"})
 
 def _is_test_class(name: str) -> bool:
-    """Return ``True`` if *name* follows pytest class convention (``Test*``).
+    """
+    Return ``True`` if *name* follows pytest class convention (``Test*``).
 
     Matches names starting with ``Test`` where the next character is uppercase,
     e.g. ``TestHandleQuery``, ``TestBulkLoad``.
@@ -32,14 +34,16 @@ def _is_test_class(name: str) -> bool:
     return len(name) > 4 and name.startswith("Test") and name[4].isupper()
 
 def _is_test_file(file_path: str) -> bool:
-    """Return ``True`` if the file is in a test directory or is a test file.
+    """
+    Return ``True`` if the file is in a test directory or is a test file.
 
     Matches paths containing ``/tests/`` or files named ``test_*.py``.
     """
     return "/tests/" in file_path or "/test_" in file_path or file_path.endswith("conftest.py")
 
 def _is_dunder(name: str) -> bool:
-    """Return ``True`` if *name* is a dunder (double-underscore) method.
+    """
+    Return ``True`` if *name* is a dunder (double-underscore) method.
 
     Dunders start and end with ``__`` and have at least one character in
     between (e.g. ``__str__``, ``__repr__``).
@@ -47,7 +51,8 @@ def _is_dunder(name: str) -> bool:
     return name.startswith("__") and name.endswith("__") and len(name) > 4
 
 def _is_type_referenced(graph: KnowledgeGraph, node_id: str, label: NodeLabel) -> bool:
-    """Return ``True`` if *node_id* is a class with incoming USES_TYPE edges.
+    """
+    Return ``True`` if *node_id* is a class with incoming USES_TYPE edges.
 
     Classes referenced via type annotations (enums, dataclasses, Protocol
     classes) are not dead — they are actively used as types.  This check
@@ -114,9 +119,10 @@ def _is_python_public_api(name: str, file_path: str) -> bool:
     return file_path.endswith("__init__.py") and not name.startswith("_")
 
 def _is_exempt(
-    name: str, is_entry_point: bool, is_exported: bool, file_path: str = ""
+    name: str, is_entry_point: bool, is_exported: bool, file_path: str = "",
 ) -> bool:
-    """Return ``True`` if the symbol is exempt from dead-code flagging.
+    """
+    Return ``True`` if the symbol is exempt from dead-code flagging.
 
     A symbol is exempt when ANY of the following hold:
 
@@ -141,7 +147,8 @@ def _is_exempt(
     )
 
 def _clear_override_false_positives(graph: KnowledgeGraph) -> int:
-    """Un-flag methods that override a non-dead base class method.
+    """
+    Un-flag methods that override a non-dead base class method.
 
     When ``A extends B`` and ``B.method`` is called, ``A.method`` (the
     override) has zero incoming CALLS and gets flagged dead.  This pass
@@ -180,7 +187,8 @@ def _clear_override_false_positives(graph: KnowledgeGraph) -> int:
     return cleared
 
 def _clear_protocol_conformance_false_positives(graph: KnowledgeGraph) -> int:
-    """Un-flag methods on classes that structurally conform to a Protocol.
+    """
+    Un-flag methods on classes that structurally conform to a Protocol.
 
     When a Protocol defines methods ``{m1, m2, m3}`` and a concrete class
     implements all of those methods without an explicit EXTENDS edge
@@ -244,7 +252,8 @@ def _clear_protocol_conformance_false_positives(graph: KnowledgeGraph) -> int:
     return cleared
 
 def _clear_protocol_stub_false_positives(graph: KnowledgeGraph) -> int:
-    """Un-flag methods on Protocol classes.
+    """
+    Un-flag methods on Protocol classes.
 
     Protocol stubs define the interface contract — they are never called
     directly (calls resolve to concrete implementations).  Flagging them
@@ -272,7 +281,8 @@ def _clear_protocol_stub_false_positives(graph: KnowledgeGraph) -> int:
     return cleared
 
 def process_dead_code(graph: KnowledgeGraph) -> int:
-    """Detect dead (unreachable) symbols and flag them in the graph.
+    """
+    Detect dead (unreachable) symbols and flag them in the graph.
 
     A symbol is considered dead when **all** of the following are true:
 

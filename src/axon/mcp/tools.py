@@ -1,4 +1,5 @@
-"""MCP tool handler implementations for Axon.
+"""
+MCP tool handler implementations for Axon.
 
 Each function accepts a storage backend and the tool-specific arguments,
 performs the appropriate query, and returns a human-readable string suitable
@@ -45,7 +46,8 @@ def _resolve_symbol(storage: StorageBackend, symbol: str) -> list:
     return storage.fts_search(symbol, limit=1)
 
 def handle_list_repos(registry_dir: Path | None = None) -> str:
-    """List indexed repositories by scanning for .axon directories.
+    """
+    List indexed repositories by scanning for .axon directories.
 
     Scans the global registry directory (defaults to ``~/.axon/repos``) for
     project metadata files and returns a formatted summary.
@@ -105,7 +107,8 @@ def _group_by_process(
     results: list,
     storage: StorageBackend,
 ) -> dict[str, list]:
-    """Map search results to their parent execution processes.
+    """
+    Map search results to their parent execution processes.
 
     Delegates to ``storage.get_process_memberships()`` for a safe
     parameterized query, falling back to an empty dict if the backend
@@ -131,7 +134,8 @@ def _group_by_process(
 
 
 def _format_query_results(results: list, groups: dict[str, list]) -> str:
-    """Format search results with process grouping.
+    """
+    Format search results with process grouping.
 
     Results belonging to a process appear under a labelled section.
     Remaining results appear in an "Other results" section.
@@ -170,7 +174,8 @@ def _format_query_results(results: list, groups: dict[str, list]) -> str:
 
 
 def handle_query(storage: StorageBackend, query: str, limit: int = 20) -> str:
-    """Execute hybrid search and format results, grouped by execution process.
+    """
+    Execute hybrid search and format results, grouped by execution process.
 
     Args:
         storage: The storage backend to search against.
@@ -198,7 +203,8 @@ def handle_query(storage: StorageBackend, query: str, limit: int = 20) -> str:
     return _format_query_results(results, groups)
 
 def handle_context(storage: StorageBackend, symbol: str) -> str:
-    """Provide a 360-degree view of a symbol.
+    """
+    Provide a 360-degree view of a symbol.
 
     Looks up the symbol by name via full-text search, then retrieves its
     callers, callees, and type references.
@@ -267,7 +273,8 @@ _DEPTH_LABELS: dict[int, str] = {
 
 
 def handle_impact(storage: StorageBackend, symbol: str, depth: int = 3) -> str:
-    """Analyse the blast radius of changing a symbol, grouped by hop depth.
+    """
+    Analyse the blast radius of changing a symbol, grouped by hop depth.
 
     Uses BFS traversal through CALLS edges to find all affected symbols
     up to the specified depth, then groups results by distance.
@@ -291,7 +298,7 @@ def handle_impact(storage: StorageBackend, symbol: str, depth: int = 3) -> str:
         return f"Symbol '{symbol}' not found."
 
     affected_with_depth = storage.traverse_with_depth(
-        start_node.id, depth, direction="callers"
+        start_node.id, depth, direction="callers",
     )
     if not affected_with_depth:
         return f"No upstream callers found for '{symbol}'."
@@ -324,7 +331,7 @@ def handle_impact(storage: StorageBackend, symbol: str, depth: int = 3) -> str:
             tag = f"  (confidence: {conf:.2f})" if conf is not None else ""
             lines.append(
                 f"  {counter}. {node.name} ({label}) -- "
-                f"{node.file_path}:{node.start_line}{tag}"
+                f"{node.file_path}:{node.start_line}{tag}",
             )
             counter += 1
 
@@ -333,7 +340,8 @@ def handle_impact(storage: StorageBackend, symbol: str, depth: int = 3) -> str:
     return "\n".join(lines)
 
 def handle_dead_code(storage: StorageBackend) -> str:
-    """List all symbols marked as dead code.
+    """
+    List all symbols marked as dead code.
 
     Delegates to :func:`~axon.mcp.resources.get_dead_code_list` for the
     shared query and formatting.
@@ -352,7 +360,8 @@ _DIFF_FILE_PATTERN = re.compile(r"^diff --git a/(.+?) b/(.+?)$", re.MULTILINE)
 _DIFF_HUNK_PATTERN = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 
 def handle_detect_changes(storage: StorageBackend, diff: str) -> str:
-    """Map git diff output to affected symbols.
+    """
+    Map git diff output to affected symbols.
 
     Parses the diff to find changed files and line ranges, then queries
     the storage backend to identify which symbols those lines belong to.
@@ -397,7 +406,7 @@ def handle_detect_changes(storage: StorageBackend, diff: str) -> str:
             rows = storage.execute_raw(
                 f"MATCH (n) WHERE n.file_path = '{_escape_cypher(file_path)}' "
                 f"AND n.start_line > 0 "
-                f"RETURN n.id, n.name, n.file_path, n.start_line, n.end_line"
+                f"RETURN n.id, n.name, n.file_path, n.start_line, n.end_line",
             )
             for row in rows or []:
                 node_id = row[0] or ""
@@ -408,7 +417,7 @@ def handle_detect_changes(storage: StorageBackend, diff: str) -> str:
                 for start, end in ranges:
                     if start_line <= end and end_line >= start:
                         affected_symbols.append(
-                            (name, label_prefix.title(), start_line, end_line)
+                            (name, label_prefix.title(), start_line, end_line),
                         )
                         break
         except Exception as exc:
@@ -438,7 +447,8 @@ _WRITE_KEYWORDS = re.compile(
 )
 
 def handle_cypher(storage: StorageBackend, query: str) -> str:
-    """Execute a raw Cypher query and return formatted results.
+    """
+    Execute a raw Cypher query and return formatted results.
 
     Only read-only queries are allowed.  Queries containing write keywords
     (DELETE, DROP, CREATE, SET, etc.) are rejected.

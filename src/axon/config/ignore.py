@@ -42,7 +42,7 @@ DEFAULT_IGNORE_PATTERNS: frozenset[str] = frozenset(
         "*.min.js",
         "*.bundle.js",
         "*.map",
-    }
+    },
 )
 
 # Separate glob patterns (contain wildcards) from literal names at module load
@@ -64,7 +64,8 @@ def _matches_default_patterns(path: Path) -> bool:
 _pathspec_cache: dict[tuple[str, ...], object] = {}
 
 def _matches_gitignore(path: Path, gitignore_patterns: list[str]) -> bool:
-    """Check *path* against a list of gitignore-style patterns.
+    """
+    Check *path* against a list of gitignore-style patterns.
 
     Uses ``pathspec`` when available for full gitignore semantics; falls back to
     fnmatch per-pattern otherwise.  The compiled pathspec is cached by the
@@ -95,7 +96,8 @@ def should_ignore(
     path: str | Path,
     gitignore_patterns: list[str] | None = None,
 ) -> bool:
-    """Return ``True`` if *path* should be ignored during file discovery.
+    """
+    Return ``True`` if *path* should be ignored during file discovery.
 
     Parameters
     ----------
@@ -115,7 +117,8 @@ def should_ignore(
     return False
 
 def load_gitignore(repo_path: Path) -> list[str]:
-    """Read ``.gitignore`` from *repo_path* and return a list of patterns.
+    """
+    Read ``.gitignore`` from *repo_path* and return a list of patterns.
 
     Blank lines and comments (lines starting with ``#``) are stripped.
     Returns an empty list when the file does not exist.

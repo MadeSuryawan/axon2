@@ -1,4 +1,5 @@
-"""Batch embedding pipeline for Axon knowledge graphs.
+"""
+Batch embedding pipeline for Axon knowledge graphs.
 
 Takes a :class:`KnowledgeGraph`, generates natural-language descriptions for
 each embeddable symbol node, encodes them using *fastembed*, and returns a
@@ -39,7 +40,7 @@ EMBEDDABLE_LABELS: frozenset[NodeLabel] = frozenset(
         NodeLabel.INTERFACE,
         NodeLabel.TYPE_ALIAS,
         NodeLabel.ENUM,
-    }
+    },
 )
 
 def embed_graph(
@@ -47,7 +48,8 @@ def embed_graph(
     model_name: str = "BAAI/bge-small-en-v1.5",
     batch_size: int = 64,
 ) -> list[NodeEmbedding]:
-    """Generate embeddings for all embeddable nodes in the graph.
+    """
+    Generate embeddings for all embeddable nodes in the graph.
 
     Uses fastembed's :class:`TextEmbedding` model for batch encoding.
     Each embeddable node is converted to a natural-language description
@@ -81,7 +83,7 @@ def embed_graph(
             NodeEmbedding(
                 node_id=node.id,
                 embedding=vector.tolist(),
-            )
+            ),
         )
 
     return results
@@ -113,7 +115,7 @@ def embed_nodes(
             NodeEmbedding(
                 node_id=node.id,
                 embedding=vector.tolist(),
-            )
+            ),
         )
 
     return embeddings

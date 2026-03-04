@@ -1,4 +1,5 @@
-"""MCP server for Axon — exposes code intelligence tools over stdio transport.
+"""
+MCP server for Axon — exposes code intelligence tools over stdio transport.
 
 Registers seven tools and three resources that give AI agents and MCP clients
 access to the Axon knowledge graph.  The server lazily initialises a
@@ -58,7 +59,8 @@ def set_lock(lock: asyncio.Lock) -> None:
 
 
 def _get_storage() -> KuzuBackend:
-    """Lazily initialise and return the KuzuDB storage backend.
+    """
+    Lazily initialise and return the KuzuDB storage backend.
 
     Looks for a ``.axon/kuzu`` directory in the current working directory.
     If it exists, the backend is initialised from that path.  Otherwise a

@@ -1,4 +1,5 @@
-"""Embedding text generation for graph nodes.
+"""
+Embedding text generation for graph nodes.
 
 Converts a :class:`GraphNode` into a structured natural-language description
 suitable for semantic embedding.  The description captures the node's identity,
@@ -11,8 +12,10 @@ from __future__ import annotations
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, NodeLabel, RelType
 
+
 def build_class_method_index(graph: KnowledgeGraph) -> dict[str, list[str]]:
-    """Pre-build a mapping from class names to their sorted method names.
+    """
+    Pre-build a mapping from class names to their sorted method names.
 
     Avoids O(classes × methods) scanning when generating text for each class.
     """
@@ -29,7 +32,8 @@ def generate_text(
     graph: KnowledgeGraph,
     class_method_index: dict[str, list[str]] | None = None,
 ) -> str:
-    """Produce a natural-language description of *node* using graph context.
+    """
+    Produce a natural-language description of *node* using graph context.
 
     The returned string is intended for use as input to an embedding model.
     It captures the node's identity, location, signature, and relationships
@@ -176,7 +180,7 @@ def _header(node: GraphNode) -> str:
     return " ".join(parts)
 
 def _target_names(
-    node_id: str, rel_type: RelType, graph: KnowledgeGraph
+    node_id: str, rel_type: RelType, graph: KnowledgeGraph,
 ) -> list[str]:
     """Return sorted names of target nodes for outgoing edges of *rel_type*."""
     rels = graph.get_outgoing(node_id, rel_type=rel_type)
@@ -188,7 +192,7 @@ def _target_names(
     return sorted(names)
 
 def _source_names(
-    node_id: str, rel_type: RelType, graph: KnowledgeGraph
+    node_id: str, rel_type: RelType, graph: KnowledgeGraph,
 ) -> list[str]:
     """Return sorted names of source nodes for incoming edges of *rel_type*."""
     rels = graph.get_incoming(node_id, rel_type=rel_type)

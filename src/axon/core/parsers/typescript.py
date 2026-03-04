@@ -1,4 +1,5 @@
-"""TypeScript / TSX / JavaScript parser using tree-sitter.
+"""
+TypeScript / TSX / JavaScript parser using tree-sitter.
 
 Extracts symbols (functions, classes, methods, interfaces, type aliases),
 imports, call expressions, type annotation references, and heritage
@@ -43,11 +44,12 @@ _BUILTIN_TYPES: frozenset[str] = frozenset(
         "null",
         "undefined",
         "object",
-    }
+    },
 )
 
 class TypeScriptParser(LanguageParser):
-    """Parse TypeScript, TSX, or JavaScript files via tree-sitter.
+    """
+    Parse TypeScript, TSX, or JavaScript files via tree-sitter.
 
     Args:
         dialect: One of ``"typescript"``, ``"tsx"``, or ``"javascript"``.
@@ -57,7 +59,7 @@ class TypeScriptParser(LanguageParser):
         if dialect not in _DIALECT_MAP:
             raise ValueError(
                 f"Unknown dialect {dialect!r}. "
-                f"Expected one of: {', '.join(sorted(_DIALECT_MAP))}"
+                f"Expected one of: {', '.join(sorted(_DIALECT_MAP))}",
             )
         self.dialect = dialect
         self._language = _DIALECT_MAP[dialect]
@@ -72,9 +74,10 @@ class TypeScriptParser(LanguageParser):
         return result
 
     def _walk(
-        self, node: Node, source: str, result: ParseResult, visited: set[int] | None = None
+        self, node: Node, source: str, result: ParseResult, visited: set[int] | None = None,
     ) -> None:
-        """Walk the tree recursively, dispatching on node type.
+        """
+        Walk the tree recursively, dispatching on node type.
 
         Uses a *visited* set (keyed by node ``id``) to avoid processing
         the same subtree twice — e.g. class bodies that are walked by both
@@ -117,9 +120,10 @@ class TypeScriptParser(LanguageParser):
             self._walk(child, source, result, visited)
 
     def _extract_export(
-        self, node: Node, source: str, result: ParseResult
+        self, node: Node, source: str, result: ParseResult,
     ) -> None:
-        """Handle ``export`` statements — mark exported symbol names.
+        """
+        Handle ``export`` statements — mark exported symbol names.
 
         Handles ``export function foo()``, ``export class Bar``,
         ``export const baz = ...``, and ``export { name1, name2 }``.
@@ -149,9 +153,10 @@ class TypeScriptParser(LanguageParser):
                             result.exports.append(name_node.text.decode())
 
     def _maybe_extract_module_exports(
-        self, node: Node, source: str, result: ParseResult
+        self, node: Node, source: str, result: ParseResult,
     ) -> None:
-        """Handle ``module.exports = X``, ``module.exports = { A, B }``,
+        """
+        Handle ``module.exports = X``, ``module.exports = { A, B }``,
         and ``exports.name = fn`` / ``module.exports.name = fn``."""
         for child in node.children:
             if child.type != "assignment_expression":
@@ -205,12 +210,12 @@ class TypeScriptParser(LanguageParser):
                         end_line=end_line,
                         content=content,
                         signature=signature,
-                    )
+                    ),
                 )
                 self._extract_function_types(func_node, sym_name, result)
 
     def _extract_function_declaration(
-        self, node: Node, source: str, result: ParseResult
+        self, node: Node, source: str, result: ParseResult,
     ) -> None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -230,7 +235,7 @@ class TypeScriptParser(LanguageParser):
                 end_line=end_line,
                 content=content,
                 signature=signature,
-            )
+            ),
         )
 
         self._extract_function_types(node, name, result)
@@ -259,13 +264,13 @@ class TypeScriptParser(LanguageParser):
                 content=content,
                 signature=signature,
                 class_name=class_name,
-            )
+            ),
         )
 
         self._extract_function_types(node, name, result)
 
     def _extract_variable_declaration(
-        self, node: Node, source: str, result: ParseResult
+        self, node: Node, source: str, result: ParseResult,
     ) -> None:
         """Handle arrow functions, function expressions, and require() calls."""
         for child in node.children:
@@ -311,7 +316,7 @@ class TypeScriptParser(LanguageParser):
                 end_line=end_line,
                 content=content,
                 signature=signature,
-            )
+            ),
         )
 
         self._extract_function_types(func_node, name, result)
@@ -346,7 +351,7 @@ class TypeScriptParser(LanguageParser):
                 module=module_str,
                 names=[var_name],
                 is_relative=module_str.startswith("."),
-            )
+            ),
         )
 
     def _extract_class(self, node: Node, source: str, result: ParseResult) -> None:
@@ -366,7 +371,7 @@ class TypeScriptParser(LanguageParser):
                 start_line=start_line,
                 end_line=end_line,
                 content=content,
-            )
+            ),
         )
 
         for child in node.children:
@@ -374,7 +379,7 @@ class TypeScriptParser(LanguageParser):
                 self._extract_class_heritage(name, child, result)
 
     def _extract_class_heritage(
-        self, class_name: str, heritage_node: Node, result: ParseResult
+        self, class_name: str, heritage_node: Node, result: ParseResult,
     ) -> None:
         for child in heritage_node.children:
             if child.type == "extends_clause":
@@ -403,7 +408,7 @@ class TypeScriptParser(LanguageParser):
                 start_line=start_line,
                 end_line=end_line,
                 content=content,
-            )
+            ),
         )
 
         for child in node.children:
@@ -429,7 +434,7 @@ class TypeScriptParser(LanguageParser):
                 start_line=start_line,
                 end_line=end_line,
                 content=content,
-            )
+            ),
         )
 
     def _extract_import(self, node: Node, source: str, result: ParseResult) -> None:
@@ -483,7 +488,7 @@ class TypeScriptParser(LanguageParser):
                 names=names,
                 is_relative=module_str.startswith("."),
                 alias=alias,
-            )
+            ),
         )
 
     def _extract_call(self, node: Node, source: str, result: ParseResult) -> None:
@@ -505,7 +510,7 @@ class TypeScriptParser(LanguageParser):
                         line=line,
                         receiver=receiver,
                         arguments=arguments,
-                    )
+                    ),
                 )
         elif func_node.type == "identifier":
             name = func_node.text.decode()
@@ -514,7 +519,7 @@ class TypeScriptParser(LanguageParser):
                 result.calls.append(CallInfo(name=name, line=line, arguments=arguments))
 
     def _extract_new_expression(
-        self, node: Node, source: str, result: ParseResult
+        self, node: Node, source: str, result: ParseResult,
     ) -> None:
         """Handle ``new ClassName(args)`` — emit a CallInfo targeting the class."""
         constructor_node = node.child_by_field_name("constructor")
@@ -530,7 +535,7 @@ class TypeScriptParser(LanguageParser):
                     name=constructor_node.text.decode(),
                     line=line,
                     arguments=arguments,
-                )
+                ),
             )
         elif constructor_node.type == "member_expression":
             obj_node = constructor_node.child_by_field_name("object")
@@ -543,7 +548,7 @@ class TypeScriptParser(LanguageParser):
                         line=line,
                         receiver=receiver,
                         arguments=arguments,
-                    )
+                    ),
                 )
 
     @staticmethod
@@ -560,7 +565,7 @@ class TypeScriptParser(LanguageParser):
         return identifiers
 
     def _extract_function_types(
-        self, func_node: Node, func_name: str, result: ParseResult
+        self, func_node: Node, func_name: str, result: ParseResult,
     ) -> None:
         """Extract parameter types and return type from a function-like node."""
         params = func_node.child_by_field_name("parameters")
@@ -596,7 +601,7 @@ class TypeScriptParser(LanguageParser):
                                         kind="param",
                                         line=sub.start_point[0] + 1,
                                         param_name=param_name,
-                                    )
+                                    ),
                                 )
 
         # Return type: type_annotation directly on the function node (not inside params).
@@ -609,11 +614,11 @@ class TypeScriptParser(LanguageParser):
                             name=type_name,
                             kind="return",
                             line=child.start_point[0] + 1,
-                        )
+                        ),
                     )
 
     def _extract_variable_type_annotation(
-        self, declarator_node: Node, result: ParseResult
+        self, declarator_node: Node, result: ParseResult,
     ) -> None:
         """Extract type from ``const x: Config = ...``."""
         for child in declarator_node.children:
@@ -625,12 +630,13 @@ class TypeScriptParser(LanguageParser):
                             name=type_name,
                             kind="variable",
                             line=child.start_point[0] + 1,
-                        )
+                        ),
                     )
 
     @staticmethod
     def _type_annotation_name(annotation_node: Node) -> str:
-        """Return the simple type name from a ``type_annotation`` node.
+        """
+        Return the simple type name from a ``type_annotation`` node.
 
         Handles ``type_identifier``, ``predefined_type``, and ``identifier``
         children.  For compound types (unions, generics, etc.) returns the
@@ -643,7 +649,8 @@ class TypeScriptParser(LanguageParser):
 
     @staticmethod
     def _string_value(string_node: Node) -> str:
-        """Extract the raw string value from a tree-sitter ``string`` node.
+        """
+        Extract the raw string value from a tree-sitter ``string`` node.
 
         String nodes look like: string -> [quote, string_fragment, quote].
         """
@@ -658,7 +665,8 @@ class TypeScriptParser(LanguageParser):
 
     @staticmethod
     def _build_function_signature(node: Node, name: str) -> str:
-        """Build a human-readable signature line for a function-like node.
+        """
+        Build a human-readable signature line for a function-like node.
 
         Includes the parameter list and return type (if present).
         """
@@ -678,7 +686,8 @@ class TypeScriptParser(LanguageParser):
 
     @staticmethod
     def _unwrap_to_function(node: Node) -> Node | None:
-        """Return the underlying function node, unwrapping wrapper calls.
+        """
+        Return the underlying function node, unwrapping wrapper calls.
 
         Handles direct ``arrow_function`` / ``function_expression`` as well as
         wrapper patterns like ``asyncHandler(async (req, res) => { ... })``.

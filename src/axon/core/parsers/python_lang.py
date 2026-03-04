@@ -1,4 +1,5 @@
-"""Python language parser using tree-sitter.
+"""
+Python language parser using tree-sitter.
 
 Extracts functions, classes, methods, imports, calls, type annotations,
 and inheritance relationships from Python source code.
@@ -37,7 +38,7 @@ _BUILTIN_TYPES: frozenset[str] = frozenset(
         "complex",
         "object",
         "type",
-    }
+    },
 )
 
 class PythonParser(LanguageParser):
@@ -63,7 +64,8 @@ class PythonParser(LanguageParser):
         result: ParseResult,
         class_name: str,
     ) -> None:
-        """Recursively walk the AST to extract definitions and annotations.
+        """
+        Recursively walk the AST to extract definitions and annotations.
 
         Call extraction is handled separately via ``_extract_calls_recursive``
         at each scope boundary (module, class, function) to avoid
@@ -117,7 +119,7 @@ class PythonParser(LanguageParser):
                 content=node_content,
                 signature=signature,
                 class_name=class_name,
-            )
+            ),
         )
 
         self._extract_param_types(node, result)
@@ -131,7 +133,7 @@ class PythonParser(LanguageParser):
                         name=type_name,
                         kind="return",
                         line=return_type.start_point[0] + 1,
-                    )
+                    ),
                 )
 
         # Call extraction is handled once at module level by parse().
@@ -166,7 +168,8 @@ class PythonParser(LanguageParser):
         result: ParseResult,
         class_name: str,
     ) -> None:
-        """Extract a decorated function or class, capturing decorator names.
+        """
+        Extract a decorated function or class, capturing decorator names.
 
         Tree-sitter wraps decorated definitions in a ``decorated_definition``
         node whose children are one or more ``decorator`` nodes followed by
@@ -197,7 +200,8 @@ class PythonParser(LanguageParser):
             result.symbols[count_before].decorators = decorators
 
     def _extract_decorator_name(self, decorator_node: Node) -> str:
-        """Extract the dotted name from a decorator node.
+        """
+        Extract the dotted name from a decorator node.
 
         Handles three forms::
 
@@ -248,7 +252,7 @@ class PythonParser(LanguageParser):
                     kind="param",
                     line=type_node.start_point[0] + 1,
                     param_name=param_name,
-                )
+                ),
             )
 
     def _extract_class(
@@ -274,7 +278,7 @@ class PythonParser(LanguageParser):
                 start_line=start_line,
                 end_line=end_line,
                 content=node_content,
-            )
+            ),
         )
 
         superclasses = node.child_by_field_name("superclasses")
@@ -301,7 +305,7 @@ class PythonParser(LanguageParser):
                     ImportInfo(
                         module=module,
                         names=[parts[-1]],
-                    )
+                    ),
                 )
             elif child.type == "aliased_import":
                 name_node = child.child_by_field_name("name")
@@ -315,7 +319,7 @@ class PythonParser(LanguageParser):
                             module=module,
                             names=[parts[-1]],
                             alias=alias,
-                        )
+                        ),
                     )
 
     def _extract_import_from(self, node: Node, result: ParseResult) -> None:
@@ -341,7 +345,7 @@ class PythonParser(LanguageParser):
                 module=module,
                 names=names,
                 is_relative=is_relative,
-            )
+            ),
         )
 
     def _extract_annotations_from_expression(
@@ -368,7 +372,7 @@ class PythonParser(LanguageParser):
                     name=type_name,
                     kind="variable",
                     line=type_node.start_point[0] + 1,
-                )
+                ),
             )
 
     @staticmethod
@@ -410,7 +414,7 @@ class PythonParser(LanguageParser):
                         CallInfo(
                             name=child.text.decode("utf8"),
                             line=child.start_point[0] + 1,
-                        )
+                        ),
                     )
                 elif child.type == "tuple":
                     # except (ErrorA, ErrorB): — extract each exception type.
@@ -420,7 +424,7 @@ class PythonParser(LanguageParser):
                                 CallInfo(
                                     name=elem.text.decode("utf8"),
                                     line=elem.start_point[0] + 1,
-                                )
+                                ),
                             )
                 elif child.type == "as_pattern":
                     # except ErrorA as e  OR  except (ErrorA, ErrorB) as e
@@ -430,7 +434,7 @@ class PythonParser(LanguageParser):
                                 CallInfo(
                                     name=sub.text.decode("utf8"),
                                     line=sub.start_point[0] + 1,
-                                )
+                                ),
                             )
                             break
                         if sub.type == "tuple":
@@ -440,7 +444,7 @@ class PythonParser(LanguageParser):
                                         CallInfo(
                                             name=elem.text.decode("utf8"),
                                             line=elem.start_point[0] + 1,
-                                        )
+                                        ),
                                     )
                             break
 
@@ -452,7 +456,7 @@ class PythonParser(LanguageParser):
                         CallInfo(
                             name=child.text.decode("utf8"),
                             line=child.start_point[0] + 1,
-                        )
+                        ),
                     )
 
         for child in node.children:
@@ -479,7 +483,7 @@ class PythonParser(LanguageParser):
                     name=func_node.text.decode("utf8"),
                     line=line,
                     arguments=arguments,
-                )
+                ),
             )
         elif func_node.type == "attribute":
             name, receiver = self._extract_attribute_call(func_node)
@@ -489,11 +493,12 @@ class PythonParser(LanguageParser):
                     line=line,
                     receiver=receiver,
                     arguments=arguments,
-                )
+                ),
             )
 
     def _extract_attribute_call(self, attr_node: Node) -> tuple[str, str]:
-        """Extract (method_name, receiver) from an attribute node.
+        """
+        Extract (method_name, receiver) from an attribute node.
 
         For chained calls like ``obj.method1().method2()``, the outer call's
         function is ``attribute(call(...), "method2")``.  We extract
@@ -522,7 +527,8 @@ class PythonParser(LanguageParser):
 
     @staticmethod
     def _extract_identifier_arguments(call_node: Node) -> list[str]:
-        """Extract bare identifier arguments from a call node.
+        """
+        Extract bare identifier arguments from a call node.
 
         Returns names of arguments that are plain identifiers (not literals,
         calls, or attribute accesses) — these are likely callback references
@@ -556,7 +562,8 @@ class PythonParser(LanguageParser):
 
     @staticmethod
     def _extract_type_name(type_node: Node) -> str:
-        """Extract the primary type name from a type annotation node.
+        """
+        Extract the primary type name from a type annotation node.
 
         For simple types like ``User``, returns ``"User"``.
         For generic types like ``list[User]``, returns ``"list"``.

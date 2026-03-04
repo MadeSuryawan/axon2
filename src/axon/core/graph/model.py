@@ -1,4 +1,5 @@
-"""Knowledge graph data model for Axon.
+"""
+Knowledge graph data model for Axon.
 
 Defines the core node and relationship types that represent code-level
 entities (files, functions, classes, etc.) and the edges between them
@@ -10,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
 
 class NodeLabel(Enum):
     """Labels for graph nodes representing code-level entities."""
@@ -41,7 +43,8 @@ class RelType(Enum):
     COUPLED_WITH = "coupled_with"
 
 def generate_id(label: NodeLabel, file_path: str, symbol_name: str = "") -> str:
-    """Produce a deterministic node ID.
+    """
+    Produce a deterministic node ID.
 
     Format: ``{label.value}:{file_path}:{symbol_name}``
 
@@ -57,7 +60,8 @@ def generate_id(label: NodeLabel, file_path: str, symbol_name: str = "") -> str:
 
 @dataclass
 class GraphNode:
-    """A node in the knowledge graph representing a code entity.
+    """
+    A node in the knowledge graph representing a code entity.
 
     ``id``, ``label``, and ``name`` are required. All other fields carry
     sensible defaults so callers only need to supply what they know.
@@ -83,7 +87,8 @@ class GraphNode:
 
 @dataclass
 class GraphRelationship:
-    """A directed edge in the knowledge graph.
+    """
+    A directed edge in the knowledge graph.
 
     ``id``, ``type``, ``source``, and ``target`` are required.
     """

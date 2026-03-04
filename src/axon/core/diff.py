@@ -1,4 +1,5 @@
-"""Branch comparison for Axon.
+"""
+Branch comparison for Axon.
 
 Compares two code graphs structurally to find added, removed, and modified
 nodes and relationships.  Uses git worktrees to avoid stashing or branch
@@ -37,7 +38,8 @@ def diff_graphs(
     base_rels: dict[str, GraphRelationship],
     current_rels: dict[str, GraphRelationship],
 ) -> StructuralDiff:
-    """Diff two graph snapshots by node/relationship IDs.
+    """
+    Diff two graph snapshots by node/relationship IDs.
 
     Nodes present only in *current_nodes* are added; only in *base_nodes* are
     removed.  Nodes with the same ID but different content/signature/lines are
@@ -91,7 +93,8 @@ def diff_branches(
     repo_path: Path,
     branch_range: str,
 ) -> StructuralDiff:
-    """Compare two branches structurally using git worktrees.
+    """
+    Compare two branches structurally using git worktrees.
 
     *branch_range* should be ``"base..current"`` (e.g. ``"main..feature"``).
     If only one branch is given (no ``..``), it is treated as the base and
@@ -148,7 +151,6 @@ def diff_branches(
 
 def _build_graph_for_ref(repo_path: Path, ref: str) -> "KnowledgeGraph":
     """Build an in-memory graph for a git ref using a temporary worktree."""
-    from axon.core.graph.graph import KnowledgeGraph
     from axon.core.ingestion.pipeline import build_graph
 
     with tempfile.TemporaryDirectory(prefix="axon_diff_") as tmp_dir:
@@ -164,7 +166,7 @@ def _build_graph_for_ref(repo_path: Path, ref: str) -> "KnowledgeGraph":
             )
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(
-                f"Failed to create worktree for ref '{ref}': {exc.stderr.strip()}"
+                f"Failed to create worktree for ref '{ref}': {exc.stderr.strip()}",
             ) from exc
 
         try:
@@ -184,7 +186,8 @@ def _build_graph_for_ref(repo_path: Path, ref: str) -> "KnowledgeGraph":
     return graph
 
 def format_diff(diff: StructuralDiff) -> str:
-    """Format a StructuralDiff as human-readable output.
+    """
+    Format a StructuralDiff as human-readable output.
 
     Args:
         diff: The structural diff to format.

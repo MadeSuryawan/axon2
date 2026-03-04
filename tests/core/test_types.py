@@ -19,7 +19,6 @@ from axon.core.ingestion.types import process_types
 _TYPE_LABELS = (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.TYPE_ALIAS)
 from axon.core.parsers.base import ParseResult, TypeRef
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -34,7 +33,7 @@ def _add_file_node(graph: KnowledgeGraph, path: str) -> str:
             label=NodeLabel.FILE,
             name=path.rsplit("/", 1)[-1],
             file_path=path,
-        )
+        ),
     )
     return node_id
 
@@ -62,7 +61,7 @@ def _add_symbol_node(
             start_line=start_line,
             end_line=end_line,
             class_name=class_name,
-        )
+        ),
     )
     file_id = generate_id(NodeLabel.FILE, file_path)
     graph.add_relationship(
@@ -71,7 +70,7 @@ def _add_symbol_node(
             type=RelType.DEFINES,
             source=file_id,
             target=node_id,
-        )
+        ),
     )
     return node_id
 
@@ -83,7 +82,8 @@ def _add_symbol_node(
 
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
-    """Build a graph matching the test fixture specification.
+    """
+    Build a graph matching the test fixture specification.
 
     File: src/auth.py
         Function: validate (lines 1-10)
@@ -117,7 +117,8 @@ def graph() -> KnowledgeGraph:
 
 @pytest.fixture()
 def parse_data() -> list[FileParseData]:
-    """Parse data with type refs matching the fixture specification.
+    """
+    Parse data with type refs matching the fixture specification.
 
     src/auth.py: User param at line 2, Config param at line 2.
     """
@@ -161,7 +162,7 @@ class TestBuildTypeIndex:
         assert index["User"] == [expected_user]
 
         expected_auth_result = generate_id(
-            NodeLabel.INTERFACE, "src/types.ts", "AuthResult"
+            NodeLabel.INTERFACE, "src/types.ts", "AuthResult",
         )
         assert index["AuthResult"] == [expected_auth_result]
 
@@ -213,7 +214,7 @@ class TestProcessTypesCreatesUsesType:
         pairs = {(r.source, r.target) for r in uses_rels}
 
         validate_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate"
+            NodeLabel.FUNCTION, "src/auth.py", "validate",
         )
         user_id = generate_id(NodeLabel.CLASS, "src/models.py", "User")
         config_id = generate_id(NodeLabel.CLASS, "src/models.py", "Config")
@@ -253,7 +254,7 @@ class TestProcessTypesUnresolvedSkipped:
     """Unknown type names don't crash and produce no relationships."""
 
     def test_process_types_unresolved_skipped(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         unresolved_data = [
             FileParseData(
@@ -287,7 +288,7 @@ class TestProcessTypesNoDuplicates:
     """Same type used twice in the same role doesn't duplicate edges."""
 
     def test_process_types_no_duplicates(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         # Two param references to User inside validate (same role).
         duplicate_data = [
@@ -320,7 +321,7 @@ class TestProcessTypesReturnType:
     """Return type annotation creates USES_TYPE with role='return'."""
 
     def test_process_types_return_type(
-        self, graph: KnowledgeGraph
+        self, graph: KnowledgeGraph,
     ) -> None:
         return_data = [
             FileParseData(
@@ -341,7 +342,7 @@ class TestProcessTypesReturnType:
 
         rel = uses_rels[0]
         validate_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate"
+            NodeLabel.FUNCTION, "src/auth.py", "validate",
         )
         user_id = generate_id(NodeLabel.CLASS, "src/models.py", "User")
 

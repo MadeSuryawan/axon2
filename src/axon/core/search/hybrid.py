@@ -1,4 +1,5 @@
-"""Hybrid search combining full-text and vector search via Reciprocal Rank Fusion.
+"""
+Hybrid search combining full-text and vector search via Reciprocal Rank Fusion.
 
 Reciprocal Rank Fusion (RRF) merges ranked lists from different retrieval
 systems into a single ranking.  Each document receives a score::
@@ -26,7 +27,8 @@ def hybrid_search(
     vector_weight: float = 1.0,
     rrf_k: int = 60,
 ) -> list[SearchResult]:
-    """Run hybrid search combining FTS and vector search with RRF.
+    """
+    Run hybrid search combining FTS and vector search with RRF.
 
     Parameters:
         query: The text query for keyword search.
@@ -82,7 +84,8 @@ def _accumulate_ranks(
     scores: dict[str, float],
     metadata: dict[str, SearchResult],
 ) -> None:
-    """Add RRF contributions from a single ranked list.
+    """
+    Add RRF contributions from a single ranked list.
 
     Only the first occurrence of each ``node_id`` in *results* is considered
     (i.e. duplicates within the same list are ignored).

@@ -15,7 +15,8 @@ SUPPORTED_EXTENSIONS: dict[str, str] = {
 }
 
 def get_language(file_path: str | Path) -> str | None:
-    """Return the language name for *file_path* based on its extension.
+    """
+    Return the language name for *file_path* based on its extension.
 
     Returns ``None`` when the extension is not in :data:`SUPPORTED_EXTENSIONS`.
     """

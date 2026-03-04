@@ -1,4 +1,5 @@
-"""Phase 8: Community detection for Axon.
+"""
+Phase 8: Community detection for Axon.
 
 Uses igraph + leidenalg to partition the call graph into functional clusters
 (communities). Each community groups tightly-connected symbols that likely
@@ -34,7 +35,8 @@ _CALLABLE_LABELS: tuple[NodeLabel, ...] = (
 def export_to_igraph(
     graph: KnowledgeGraph,
 ) -> tuple[ig.Graph, dict[int, str]]:
-    """Extract the call graph from *graph* and build an igraph representation.
+    """
+    Extract the call graph from *graph* and build an igraph representation.
 
     Only Function, Method, and Class nodes are included. Only CALLS
     relationships between those nodes are used as edges.
@@ -71,7 +73,8 @@ def export_to_igraph(
     return ig_graph, index_to_node_id
 
 def generate_label(graph: KnowledgeGraph, member_ids: list[str]) -> str:
-    """Generate a heuristic label for a community based on member file paths.
+    """
+    Generate a heuristic label for a community based on member file paths.
 
     Strategy:
     - Extract the parent directory from each member's ``file_path``.
@@ -114,7 +117,8 @@ def process_communities(
     graph: KnowledgeGraph,
     min_community_size: int = 2,
 ) -> int:
-    """Detect communities in the call graph and add them to the knowledge graph.
+    """
+    Detect communities in the call graph and add them to the knowledge graph.
 
     Uses the Leiden algorithm with modularity-based vertex partitioning.
 
@@ -142,7 +146,7 @@ def process_communities(
         return 0
 
     partition = leidenalg.find_partition(
-        ig_graph, leidenalg.ModularityVertexPartition
+        ig_graph, leidenalg.ModularityVertexPartition,
     )
     modularity_score = partition.modularity
 
@@ -175,7 +179,7 @@ def process_communities(
                     type=RelType.MEMBER_OF,
                     source=member_id,
                     target=community_id,
-                )
+                ),
             )
 
         community_count += 1
@@ -188,6 +192,6 @@ def process_communities(
         )
 
     logger.info(
-        "Community detection complete: %d communities created.", community_count
+        "Community detection complete: %d communities created.", community_count,
     )
     return community_count

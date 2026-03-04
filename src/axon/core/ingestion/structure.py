@@ -1,4 +1,5 @@
-"""Phase 2: Structure processing for Axon.
+"""
+Phase 2: Structure processing for Axon.
 
 Takes a list of file entries (path, content, language) and populates the
 knowledge graph with File and Folder nodes connected by CONTAINS relationships.
@@ -22,7 +23,8 @@ if TYPE_CHECKING:
     from axon.core.ingestion.walker import FileEntry
 
 def process_structure(files: list[FileEntry], graph: KnowledgeGraph) -> None:
-    """Build File/Folder nodes and CONTAINS relationships from a list of files.
+    """
+    Build File/Folder nodes and CONTAINS relationships from a list of files.
 
     For every file entry a :pyclass:`NodeLabel.FILE` node is created.  Every
     unique directory that appears in any file path produces a
@@ -55,7 +57,7 @@ def process_structure(files: list[FileEntry], graph: KnowledgeGraph) -> None:
                     label=NodeLabel.FOLDER,
                     name=PurePosixPath(dir_path).name,
                     file_path=dir_path,
-                )
+                ),
             )
 
     for file_info in files:
@@ -68,7 +70,7 @@ def process_structure(files: list[FileEntry], graph: KnowledgeGraph) -> None:
                 file_path=file_info.path,
                 content=file_info.content,
                 language=file_info.language,
-            )
+            ),
         )
 
     # Folder -> Folder (parent contains child)
@@ -87,7 +89,7 @@ def process_structure(files: list[FileEntry], graph: KnowledgeGraph) -> None:
                 type=RelType.CONTAINS,
                 source=parent_id,
                 target=child_id,
-            )
+            ),
         )
 
     # Folder -> File (immediate parent folder contains file)
@@ -106,5 +108,5 @@ def process_structure(files: list[FileEntry], graph: KnowledgeGraph) -> None:
                 type=RelType.CONTAINS,
                 source=parent_id,
                 target=file_id,
-            )
+            ),
         )

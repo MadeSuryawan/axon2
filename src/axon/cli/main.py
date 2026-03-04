@@ -7,14 +7,16 @@ from asyncio import run as asyncio_run
 from datetime import UTC, datetime
 from hashlib import sha256
 from json import JSONDecodeError, dumps, loads
-from logging import getLogger
+from logging import basicConfig, getLogger
 from pathlib import Path
 from shutil import rmtree
 from sys import stderr
 
 from mcp.server.stdio import stdio_server
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.traceback import install
 from typer import Argument, Exit, Option, Typer, confirm
 
 from axon import __version__
@@ -35,7 +37,16 @@ from axon.mcp.tools import (
 )
 
 console = Console()
-logger = getLogger(__name__)
+basicConfig(
+    level="NOTSET",
+    format="%(message)s",
+    datefmt="%X",
+    handlers=[RichHandler(rich_tracebacks=True)],
+)
+logger = getLogger("rich")
+console = Console()
+install()
+
 # Module-level singletons to avoid typer calls in function defaults
 _REPO_OPTION = Option(
     None,
@@ -446,6 +457,58 @@ def mcp() -> None:
     asyncio_run(mcp_main())
 
 
+def _check_meta_json(axon_dir: Path, repo_path: Path, storage: KuzuBackend) -> None:
+    """Check if meta.json exists, and if not, run initial indexing."""
+
+    if not (axon_dir / "meta.json").exists():
+        print(f"No index found at {axon_dir}. Running initial index...", file=stderr)
+
+        def _stderr_progress(phase: str, pct: float) -> None:
+            if pct == 0.0:
+                print(f"  {phase}...", file=stderr, flush=True)
+
+        _, result = run_pipeline(
+            repo_path,
+            storage,
+            full=True,
+            progress_callback=_stderr_progress,
+        )
+
+        meta = _build_meta(result, repo_path)
+        meta_path = axon_dir / "meta.json"
+        meta_path.write_text(dumps(meta, indent=2) + "\n", encoding="utf-8")
+
+        try:
+            _register_in_global_registry(meta, repo_path)
+        except (RuntimeError, OSError, SystemError):
+            logger.debug("Failed to register repo in global registry", exc_info=True)
+
+
+async def _run(
+    repo_path: Path,
+    storage: KuzuBackend,
+) -> None:
+    lock = Lock()
+    set_storage(storage)
+    set_lock(lock)
+    stop = Event()
+
+    async with stdio_server() as (read, write):
+
+        async def _mcp_then_stop() -> None:
+            await mcp_server.run(
+                read,
+                write,
+                mcp_server.create_initialization_options(),
+            )
+            stop.set()
+
+        await gather(
+            _mcp_then_stop(),
+            watch_repo(repo_path, storage, stop_event=stop, lock=lock),
+        )
+
+
 @app.command()
 def serve(
     *,
@@ -465,25 +528,8 @@ def serve(
     repo_path, axon_dir, db_path = _get_path()
     storage = _get_kuzu(db_path)
 
-    if not (axon_dir / "meta.json").exists():
-        print("Running initial index...", file=stderr)
-
-        def _stderr_progress(phase: str, pct: float) -> None:
-            if pct == 0.0:
-                print(f"  {phase}...", file=stderr, flush=True)
-
-        _, result = run_pipeline(repo_path, storage, full=True, progress_callback=_stderr_progress)
-
-        meta = _build_meta(result, repo_path)
-        meta_path = axon_dir / "meta.json"
-        meta_path.write_text(dumps(meta, indent=2) + "\n", encoding="utf-8")
-
-        try:
-            _register_in_global_registry(meta, repo_path)
-        except (RuntimeError, OSError, SystemError):
-            logger.debug("Failed to register repo in global registry", exc_info=True)
-
-        print("  Index complete.", file=stderr, flush=True)
+    _check_meta_json(axon_dir, repo_path, storage)
+    print("  Index complete.", file=stderr, flush=True)
 
     lock = Lock()
     set_storage(storage)

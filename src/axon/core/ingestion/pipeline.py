@@ -1,4 +1,5 @@
-"""Pipeline orchestrator for Axon.
+"""
+Pipeline orchestrator for Axon.
 
 Runs all ingestion phases in sequence, populates an in-memory knowledge graph,
 bulk-loads it into a storage backend, and returns a summary of the results.
@@ -26,9 +27,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from axon.config.ignore import load_gitignore
+from axon.core.embeddings.embedder import embed_graph
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphRelationship, NodeLabel
-from axon.core.embeddings.embedder import embed_graph
 from axon.core.ingestion.calls import process_calls
 from axon.core.ingestion.community import process_communities
 from axon.core.ingestion.coupling import process_coupling
@@ -41,6 +42,7 @@ from axon.core.ingestion.structure import process_structure
 from axon.core.ingestion.types import process_types
 from axon.core.ingestion.walker import FileEntry, walk_repo
 from axon.core.storage.base import StorageBackend
+
 
 @dataclass
 class PipelineResult:
@@ -72,7 +74,8 @@ def run_pipeline(
     progress_callback: Callable[[str, float], None] | None = None,
     embeddings: bool = True,
 ) -> tuple[KnowledgeGraph, PipelineResult]:
-    """Run phases 1-11 of the ingestion pipeline.
+    """
+    Run phases 1-11 of the ingestion pipeline.
 
     When *storage* is provided the graph is bulk-loaded into it after
     all phases complete.  When ``None``, only the in-memory graph is
@@ -189,7 +192,8 @@ def reindex_files(
     repo_path: Path,
     storage: StorageBackend,
 ) -> KnowledgeGraph:
-    """Re-index specific files through phases 2-7 (file-local phases).
+    """
+    Re-index specific files through phases 2-7 (file-local phases).
 
     Removes old nodes for these files from storage, re-parses them,
     and inserts updated nodes/relationships. Returns the partial graph
@@ -215,7 +219,7 @@ def reindex_files(
     saved_edges: list[GraphRelationship] = []
     for fp in changed_files:
         saved_edges.extend(
-            storage.get_inbound_cross_file_edges(fp, exclude_source_files=changed_files)
+            storage.get_inbound_cross_file_edges(fp, exclude_source_files=changed_files),
         )
 
     for entry in file_entries:
@@ -241,7 +245,8 @@ def reindex_files(
     return graph
 
 def build_graph(repo_path: Path) -> KnowledgeGraph:
-    """Run phases 1-11 and return the in-memory graph (no storage load).
+    """
+    Run phases 1-11 and return the in-memory graph (no storage load).
 
     This is used by branch comparison to build a graph snapshot without
     needing a storage backend.

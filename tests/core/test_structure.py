@@ -173,7 +173,7 @@ class TestFileNodeProperties:
                 path="src/auth/validate.py",
                 content="def validate(): pass",
                 language="python",
-            )
+            ),
         ]
         process_structure(files, graph)
 

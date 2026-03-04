@@ -1,4 +1,5 @@
-"""Tests for the batch embedding pipeline (Task 24).
+"""
+Tests for the batch embedding pipeline (Task 24).
 
 Verifies that ``embed_graph`` correctly:
 - Filters nodes to only embeddable labels (skipping Folder, Community, Process)
@@ -12,11 +13,12 @@ IMPORTANT: All tests mock ``TextEmbedding`` to avoid slow model downloads.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, call, patch
 
-from axon.core.embeddings.embedder import embed_graph, embed_nodes, EMBEDDABLE_LABELS, _get_model
+from axon.core.embeddings.embedder import EMBEDDABLE_LABELS, _get_model, embed_graph, embed_nodes
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, GraphRelationship, NodeLabel, RelType, generate_id
 from axon.core.storage.base import NodeEmbedding
@@ -45,7 +47,7 @@ def sample_graph() -> KnowledgeGraph:
             label=NodeLabel.FUNCTION,
             name="foo",
             file_path="src/a.py",
-        )
+        ),
     )
     graph.add_node(
         GraphNode(
@@ -53,14 +55,14 @@ def sample_graph() -> KnowledgeGraph:
             label=NodeLabel.CLASS,
             name="Bar",
             file_path="src/a.py",
-        )
+        ),
     )
     graph.add_node(
         GraphNode(
             id="folder::src",
             label=NodeLabel.FOLDER,
             name="src",
-        )
+        ),
     )
     return graph
 
@@ -160,7 +162,7 @@ class TestEmbedGraphBasic:
         """embed_graph returns a list of NodeEmbedding objects for embeddable nodes."""
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 
@@ -171,12 +173,12 @@ class TestEmbedGraphBasic:
 
     @patch("fastembed.TextEmbedding")
     def test_embedding_vectors_are_lists_of_float(
-        self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph
+        self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph,
     ) -> None:
         """Embedding vectors are plain Python lists, not numpy arrays."""
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 
@@ -188,12 +190,12 @@ class TestEmbedGraphBasic:
 
     @patch("fastembed.TextEmbedding")
     def test_embedding_values_match(
-        self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph
+        self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph,
     ) -> None:
         """Embedding values from the model are correctly mapped to NodeEmbedding objects."""
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 
@@ -206,12 +208,12 @@ class TestEmbedGraphBasic:
 
     @patch("fastembed.TextEmbedding")
     def test_node_ids_are_correct(
-        self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph
+        self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph,
     ) -> None:
         """NodeEmbedding objects carry the correct node IDs."""
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 
@@ -232,12 +234,12 @@ class TestEmbedGraphFiltering:
 
     @patch("fastembed.TextEmbedding")
     def test_skips_folder_nodes(
-        self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph
+        self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph,
     ) -> None:
         """Folder nodes are excluded from embedding."""
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 
@@ -248,13 +250,13 @@ class TestEmbedGraphFiltering:
 
     @patch("fastembed.TextEmbedding")
     def test_skips_community_and_process(
-        self, mock_te_cls: MagicMock, all_label_graph: KnowledgeGraph
+        self, mock_te_cls: MagicMock, all_label_graph: KnowledgeGraph,
     ) -> None:
         """Community and Process nodes are excluded from embedding."""
         embeddable_count = 7  # FILE, FUNCTION, CLASS, METHOD, INTERFACE, TYPE_ALIAS, ENUM
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]) for _ in range(embeddable_count)]
+            [np.array([0.1, 0.2, 0.3]) for _ in range(embeddable_count)],
         )
         mock_te_cls.return_value = mock_model
 
@@ -268,13 +270,13 @@ class TestEmbedGraphFiltering:
 
     @patch("fastembed.TextEmbedding")
     def test_all_embeddable_labels_included(
-        self, mock_te_cls: MagicMock, all_label_graph: KnowledgeGraph
+        self, mock_te_cls: MagicMock, all_label_graph: KnowledgeGraph,
     ) -> None:
         """All embeddable label types produce NodeEmbedding objects."""
         embeddable_count = 7
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]) for _ in range(embeddable_count)]
+            [np.array([0.1, 0.2, 0.3]) for _ in range(embeddable_count)],
         )
         mock_te_cls.return_value = mock_model
 
@@ -319,10 +321,10 @@ class TestEmbedGraphEmpty:
 
         graph = KnowledgeGraph()
         graph.add_node(
-            GraphNode(id="folder::src", label=NodeLabel.FOLDER, name="src")
+            GraphNode(id="folder::src", label=NodeLabel.FOLDER, name="src"),
         )
         graph.add_node(
-            GraphNode(id="community::auth", label=NodeLabel.COMMUNITY, name="auth")
+            GraphNode(id="community::auth", label=NodeLabel.COMMUNITY, name="auth"),
         )
 
         results = embed_graph(graph)
@@ -343,7 +345,7 @@ class TestEmbedGraphModelConfig:
         """Default model is BAAI/bge-small-en-v1.5."""
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 
@@ -356,7 +358,7 @@ class TestEmbedGraphModelConfig:
         """A custom model name is forwarded to TextEmbedding."""
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 
@@ -366,12 +368,12 @@ class TestEmbedGraphModelConfig:
 
     @patch("fastembed.TextEmbedding")
     def test_custom_batch_size_passed_to_embed(
-        self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph
+        self, mock_te_cls: MagicMock, sample_graph: KnowledgeGraph,
     ) -> None:
         """The batch_size parameter is forwarded to model.embed()."""
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 
@@ -404,7 +406,7 @@ class TestEmbedGraphTextGeneration:
         mock_gen_text.return_value = "mock text"
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 
@@ -425,7 +427,7 @@ class TestEmbedGraphTextGeneration:
         mock_gen_text.side_effect = ["text for foo", "text for Bar"]
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 
@@ -458,12 +460,12 @@ class TestEmbedGraphBatchProcessing:
                     label=NodeLabel.FUNCTION,
                     name=f"fn_{i}",
                     file_path="src/mod.py",
-                )
+                ),
             )
 
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([float(i), float(i + 1), float(i + 2)]) for i in range(count)]
+            [np.array([float(i), float(i + 1), float(i + 2)]) for i in range(count)],
         )
         mock_te_cls.return_value = mock_model
 
@@ -478,7 +480,7 @@ class TestEmbedGraphBatchProcessing:
         """When batch_size is not specified, 64 is used by default."""
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 
@@ -570,7 +572,7 @@ class TestEmbedNodes:
 
         mock_model = MagicMock()
         mock_model.embed.return_value = iter(
-            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
+            [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])],
         )
         mock_te_cls.return_value = mock_model
 

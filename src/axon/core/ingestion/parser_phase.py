@@ -1,4 +1,5 @@
-"""Phase 3: Code parsing for Axon.
+"""
+Phase 3: Code parsing for Axon.
 
 Takes file entries from the walker, parses each one with the appropriate
 tree-sitter parser, and adds symbol nodes (Function, Class, Method, Interface,
@@ -46,7 +47,8 @@ class FileParseData:
 _PARSER_CACHE: dict[str, LanguageParser] = {}
 
 def get_parser(language: str) -> LanguageParser:
-    """Return the appropriate tree-sitter parser for *language*.
+    """
+    Return the appropriate tree-sitter parser for *language*.
 
     Parser instances are cached per language to avoid repeated instantiation
     of tree-sitter ``Parser`` objects.
@@ -82,14 +84,15 @@ def get_parser(language: str) -> LanguageParser:
     else:
         raise ValueError(
             f"Unsupported language {language!r}. "
-            f"Expected one of: python, typescript, javascript"
+            f"Expected one of: python, typescript, javascript",
         )
 
     _PARSER_CACHE[language] = parser
     return parser
 
 def parse_file(file_path: str, content: str, language: str) -> FileParseData:
-    """Parse a single file and return structured parse data.
+    """
+    Parse a single file and return structured parse data.
 
     If parsing fails for any reason the returned :class:`FileParseData` will
     contain an empty :class:`ParseResult` so that downstream phases can
@@ -117,7 +120,8 @@ def process_parsing(
     graph: KnowledgeGraph,
     max_workers: int = 8,
 ) -> list[FileParseData]:
-    """Parse every file and populate the knowledge graph with symbol nodes.
+    """
+    Parse every file and populate the knowledge graph with symbol nodes.
 
     Parsing is done in parallel using a thread pool (tree-sitter releases
     the GIL during C parsing).  Graph mutation remains sequential since
@@ -143,7 +147,7 @@ def process_parsing(
             executor.map(
                 lambda f: parse_file(f.path, f.content, f.language),
                 files,
-            )
+            ),
         )
 
     # Phase 2: Graph mutation (sequential — not thread-safe).
@@ -200,7 +204,7 @@ def process_parsing(
                     language=file_entry.language,
                     is_exported=is_exported,
                     properties=props,
-                )
+                ),
             )
 
             rel_id = f"defines:{file_id}->{symbol_id}"
@@ -210,7 +214,7 @@ def process_parsing(
                     type=RelType.DEFINES,
                     source=file_id,
                     target=symbol_id,
-                )
+                ),
             )
 
     return all_parse_data
