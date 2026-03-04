@@ -24,6 +24,7 @@ _SYMBOL_LABELS: tuple[NodeLabel, ...] = (
 
 _CONSTRUCTOR_NAMES: frozenset[str] = frozenset({"__init__", "__new__"})
 
+
 def _is_test_class(name: str) -> bool:
     """
     Return ``True`` if *name* follows pytest class convention (``Test*``).
@@ -33,6 +34,7 @@ def _is_test_class(name: str) -> bool:
     """
     return len(name) > 4 and name.startswith("Test") and name[4].isupper()
 
+
 def _is_test_file(file_path: str) -> bool:
     """
     Return ``True`` if the file is in a test directory or is a test file.
@@ -40,6 +42,7 @@ def _is_test_file(file_path: str) -> bool:
     Matches paths containing ``/tests/`` or files named ``test_*.py``.
     """
     return "/tests/" in file_path or "/test_" in file_path or file_path.endswith("conftest.py")
+
 
 def _is_dunder(name: str) -> bool:
     """
@@ -49,6 +52,7 @@ def _is_dunder(name: str) -> bool:
     between (e.g. ``__str__``, ``__repr__``).
     """
     return name.startswith("__") and name.endswith("__") and len(name) > 4
+
 
 def _is_type_referenced(graph: KnowledgeGraph, node_id: str, label: NodeLabel) -> bool:
     """
@@ -63,22 +67,39 @@ def _is_type_referenced(graph: KnowledgeGraph, node_id: str, label: NodeLabel) -
         return False
     return graph.has_incoming(node_id, RelType.USES_TYPE)
 
-_NON_FRAMEWORK_DECORATORS: frozenset[str] = frozenset({
-    "functools.wraps",
-    "functools.lru_cache",
-    "functools.cached_property",
-    "functools.cache",
-})
 
-_FRAMEWORK_DECORATOR_NAMES: frozenset[str] = frozenset({
-    "task", "shared_task", "periodic_task", "job",
-    "receiver", "on_event", "handler",
-    "validator", "field_validator", "root_validator", "model_validator",
-    "contextmanager", "asynccontextmanager",
-    "fixture",
-    "route", "endpoint", "command",
-    "hybrid_property",
-})
+_NON_FRAMEWORK_DECORATORS: frozenset[str] = frozenset(
+    {
+        "functools.wraps",
+        "functools.lru_cache",
+        "functools.cached_property",
+        "functools.cache",
+    },
+)
+
+_FRAMEWORK_DECORATOR_NAMES: frozenset[str] = frozenset(
+    {
+        "task",
+        "shared_task",
+        "periodic_task",
+        "job",
+        "receiver",
+        "on_event",
+        "handler",
+        "validator",
+        "field_validator",
+        "root_validator",
+        "model_validator",
+        "contextmanager",
+        "asynccontextmanager",
+        "fixture",
+        "route",
+        "endpoint",
+        "command",
+        "hybrid_property",
+    },
+)
+
 
 def _has_framework_decorator(node: GraphNode) -> bool:
     """Return ``True`` if *node* has a framework decorator (dotted or undotted)."""
@@ -88,24 +109,39 @@ def _has_framework_decorator(node: GraphNode) -> bool:
         for dec in decorators
     )
 
+
 def _has_property_decorator(node: GraphNode) -> bool:
     """Return ``True`` if *node* is a ``@property`` (accessed as attribute, not called)."""
     decorators: list[str] = node.properties.get("decorators", [])
     return "property" in decorators
 
-_TYPING_STUB_DECORATORS: frozenset[str] = frozenset({
-    "overload", "typing.overload",
-    "abstractmethod", "abc.abstractmethod",
-})
+
+_TYPING_STUB_DECORATORS: frozenset[str] = frozenset(
+    {
+        "overload",
+        "typing.overload",
+        "abstractmethod",
+        "abc.abstractmethod",
+    },
+)
+
 
 def _has_typing_stub_decorator(node: GraphNode) -> bool:
     """Return ``True`` if *node* is an ``@overload`` or ``@abstractmethod`` stub."""
     decorators: list[str] = node.properties.get("decorators", [])
     return any(d in _TYPING_STUB_DECORATORS for d in decorators)
 
-_ENUM_BASES: frozenset[str] = frozenset({
-    "Enum", "IntEnum", "StrEnum", "Flag", "IntFlag",
-})
+
+_ENUM_BASES: frozenset[str] = frozenset(
+    {
+        "Enum",
+        "IntEnum",
+        "StrEnum",
+        "Flag",
+        "IntFlag",
+    },
+)
+
 
 def _is_enum_class(node: GraphNode, label: NodeLabel) -> bool:
     """Return ``True`` if *node* is an enum class (members accessed via dot, not called)."""
@@ -114,12 +150,18 @@ def _is_enum_class(node: GraphNode, label: NodeLabel) -> bool:
     bases: list[str] = node.properties.get("bases", [])
     return bool(_ENUM_BASES & set(bases))
 
+
 def _is_python_public_api(name: str, file_path: str) -> bool:
     """Return ``True`` if *name* is a public symbol in an ``__init__.py`` file."""
     return file_path.endswith("__init__.py") and not name.startswith("_")
 
+
 def _is_exempt(
-    name: str, is_entry_point: bool, is_exported: bool, file_path: str = "",
+    name: str,
+    *,
+    is_entry_point: bool,
+    is_exported: bool,
+    file_path: str = "",
 ) -> bool:
     """
     Return ``True`` if the symbol is exempt from dead-code flagging.
@@ -145,6 +187,7 @@ def _is_exempt(
         or _is_dunder(name)
         or _is_python_public_api(name, file_path)
     )
+
 
 def _clear_override_false_positives(graph: KnowledgeGraph) -> int:
     """
@@ -186,70 +229,65 @@ def _clear_override_false_positives(graph: KnowledgeGraph) -> int:
 
     return cleared
 
-def _clear_protocol_conformance_false_positives(graph: KnowledgeGraph) -> int:
-    """
-    Un-flag methods on classes that structurally conform to a Protocol.
 
-    When a Protocol defines methods ``{m1, m2, m3}`` and a concrete class
-    implements all of those methods without an explicit EXTENDS edge
-    (structural subtyping), the concrete methods may be flagged dead
-    because CALLS edges resolve to the Protocol's stubs, not the
-    concrete implementations.
-
-    This pass:
-
-    1. Finds Protocol classes (annotated with ``is_protocol`` in properties).
-    2. Collects their non-dunder method names as the required interface.
-    3. Finds non-Protocol classes whose methods are a superset.
-    4. Un-flags dead methods whose name is in the protocol interface.
-
-    Returns the number of methods un-flagged.
-    """
+def _get_protocol_methods(graph: KnowledgeGraph) -> dict[str, set[str]]:
     protocol_methods: dict[str, set[str]] = {}
     for cls_node in graph.get_nodes_by_label(NodeLabel.CLASS):
-        if not cls_node.properties.get("is_protocol"):
-            continue
-        methods = set()
-        for method in graph.get_nodes_by_label(NodeLabel.METHOD):
-            if method.class_name == cls_node.name and not _is_dunder(method.name):
-                methods.add(method.name)
-        if methods:
-            protocol_methods[cls_node.name] = methods
+        if cls_node.properties.get("is_protocol"):
+            methods = {
+                method.name
+                for method in graph.get_nodes_by_label(NodeLabel.METHOD)
+                if method.class_name == cls_node.name and not _is_dunder(method.name)
+            }
+            if methods:
+                protocol_methods[cls_node.name] = methods
+    return protocol_methods
 
-    if not protocol_methods:
-        return 0
 
+def _get_class_methods(graph: KnowledgeGraph) -> dict[str, set[str]]:
     class_methods: dict[str, set[str]] = {}
     for method in graph.get_nodes_by_label(NodeLabel.METHOD):
         if method.class_name:
             class_methods.setdefault(method.class_name, set()).add(method.name)
+    return class_methods
 
+
+def _get_clearable_methods(
+    protocol_methods: dict[str, set[str]],
+    class_methods: dict[str, set[str]],
+) -> dict[str, set[str]]:
     clearable: dict[str, set[str]] = {}
     for proto_name, required in protocol_methods.items():
         for cls_name, methods in class_methods.items():
-            if cls_name == proto_name:
-                continue
-            if required <= methods:  # structural conformance
+            if cls_name != proto_name and required <= methods:
                 clearable.setdefault(cls_name, set()).update(required)
+    return clearable
 
+
+def _clear_protocol_conformance_false_positives(graph: KnowledgeGraph) -> int:
+    """Un-flag methods on classes that structurally conform to a Protocol."""
+    protocol_methods = _get_protocol_methods(graph)
+    if not protocol_methods:
+        return 0
+
+    class_methods = _get_class_methods(graph)
+    clearable = _get_clearable_methods(protocol_methods, class_methods)
     if not clearable:
         return 0
 
     cleared = 0
     for method in graph.get_nodes_by_label(NodeLabel.METHOD):
-        if not method.is_dead or not method.class_name:
-            continue
-        names_to_clear = clearable.get(method.class_name)
-        if names_to_clear and method.name in names_to_clear:
-            method.is_dead = False
-            cleared += 1
-            logger.debug(
-                "Un-flagged protocol conformance: %s.%s",
-                method.class_name,
-                method.name,
-            )
+        if method.is_dead and method.class_name:
+            names_to_clear = clearable.get(method.class_name)
+            if names_to_clear and method.name in names_to_clear:
+                method.is_dead = False
+                cleared += 1
+                logger.debug(
+                    f"Un-flagged protocol conformance: {method.class_name}.{method.class_name}",
+                )
 
     return cleared
+
 
 def _clear_protocol_stub_false_positives(graph: KnowledgeGraph) -> int:
     """
@@ -279,6 +317,7 @@ def _clear_protocol_stub_false_positives(graph: KnowledgeGraph) -> int:
             logger.debug("Un-flagged protocol stub: %s.%s", method.class_name, method.name)
 
     return cleared
+
 
 def process_dead_code(graph: KnowledgeGraph) -> int:
     """
@@ -321,7 +360,12 @@ def process_dead_code(graph: KnowledgeGraph) -> int:
 
     for label in _SYMBOL_LABELS:
         for node in graph.get_nodes_by_label(label):
-            if _is_exempt(node.name, node.is_entry_point, node.is_exported, node.file_path):
+            if _is_exempt(
+                node.name,
+                is_entry_point=node.is_entry_point,
+                is_exported=node.is_exported,
+                file_path=node.file_path,
+            ):
                 continue
             if graph.has_incoming(node.id, RelType.CALLS):
                 continue
