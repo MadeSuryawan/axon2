@@ -21,10 +21,13 @@ Phases executed:
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from logging import getLogger
 from pathlib import Path
+from time import monotonic
+
+from rich import print as rprint
 
 from axon.config.ignore import load_gitignore
 from axon.core.embeddings.embedder import embed_graph
@@ -36,12 +39,14 @@ from axon.core.ingestion.coupling import process_coupling
 from axon.core.ingestion.dead_code import process_dead_code
 from axon.core.ingestion.heritage import process_heritage
 from axon.core.ingestion.imports import process_imports
-from axon.core.ingestion.parser_phase import process_parsing
+from axon.core.ingestion.parser_phase import FileParseData, process_parsing
 from axon.core.ingestion.processes import process_processes
 from axon.core.ingestion.structure import process_structure
 from axon.core.ingestion.types import process_types
 from axon.core.ingestion.walker import FileEntry, walk_repo
 from axon.core.storage.base import StorageBackend
+
+logger = getLogger(__name__)
 
 
 @dataclass
@@ -69,126 +74,122 @@ _SYMBOL_LABELS: frozenset[NodeLabel] = frozenset(NodeLabel) - {
 }
 
 
-def run_pipeline(
-    repo_path: Path,
-    storage: StorageBackend | None = None,
-    full: bool = False,
-    progress_callback: Callable[[str, float], None] | None = None,
-    embeddings: bool = True,
-) -> tuple[KnowledgeGraph, PipelineResult]:
+class Pipelines:
     """
-    Run phases 1-11 of the ingestion pipeline.
+    Orchestrates the execution of the ingestion pipeline.
 
-    When *storage* is provided the graph is bulk-loaded into it after
-    all phases complete.  When ``None``, only the in-memory graph is
-    returned (useful for branch comparison snapshots).
-
-    Parameters
-    ----------
-    repo_path:
-        Root directory of the repository to analyse.
-    storage:
-        An already-initialised :class:`StorageBackend` to persist the graph.
-        Pass ``None`` to skip storage loading.
-    full:
-        When ``True``, skip incremental-diff logic (Phase 0) and force a full
-        re-index.  Currently Phase 0 is a no-op regardless of this flag.
-    progress_callback:
-        Optional ``(phase_name, progress)`` callback where *progress* is a
-        float in ``[0.0, 1.0]``.
-    embeddings:
-        When ``True`` (default), generate and store vector embeddings after
-        bulk-loading.  Set to ``False`` to skip embedding generation.
-
-    Returns
-    -------
-    tuple[KnowledgeGraph, PipelineResult]
-        The populated graph and a summary dataclass with counts and timings.
+    Args:
+        repo_path: Root directory of the repository to analyze.
+        storage: An already-initialized :class:`StorageBackend` to persist the graph.
+        full: When ``True``, skip incremental-diff logic (Phase 0) and force a full
+            re-index.  Currently Phase 0 is a no-op regardless of this flag.
+        embeddings: When ``True`` (default), generate and store vector embeddings after
+            bulk-loading.
     """
-    start = time.monotonic()
-    result = PipelineResult()
 
-    def report(phase: str, pct: float) -> None:
-        if progress_callback is not None:
-            progress_callback(phase, pct)
+    def __init__(
+        self,
+        repo_path: Path,
+        storage: StorageBackend | None = None,
+        *,
+        full: bool = False,
+        embeddings: bool = True,
+    ) -> None:
+        self._repo_path = repo_path
+        self._storage = storage
+        self._full = full
+        self._embeddings = embeddings
+        self._gitignore: list[str] = []
+        self._files: list[FileEntry] = []
+        self._graph = KnowledgeGraph()
+        self._result = PipelineResult()
+        self._parsed_data: list[FileParseData] = []
 
-    report("Walking files", 0.0)
-    gitignore = load_gitignore(repo_path)
-    files = walk_repo(repo_path, gitignore)
-    result.files = len(files)
-    report("Walking files", 1.0)
+    @property
+    def graph(self) -> KnowledgeGraph:
+        return self._graph
 
-    graph = KnowledgeGraph()
+    @property
+    def result(self) -> PipelineResult:
+        return self._result
 
-    report("Processing structure", 0.0)
-    process_structure(files, graph)
-    report("Processing structure", 1.0)
+    def _pipelines_dict(self) -> dict[str, Callable]:
 
-    report("Parsing code", 0.0)
-    parse_data = process_parsing(files, graph)
-    report("Parsing code", 1.0)
+        return {
+            "Processing structure": lambda: process_structure(self._files, self._graph),
+            "Parsing code": lambda: setattr(
+                self,
+                "_parsed_data",
+                process_parsing(self._files, self._graph),
+            ),
+            "Resolving imports": lambda: process_imports(self._parsed_data, self._graph),
+            "Tracing calls": lambda: Calls(self._parsed_data, self._graph).process_calls(),
+            "Extracting heritage": lambda: process_heritage(self._parsed_data, self._graph),
+            "Analyzing types": lambda: process_types(self._parsed_data, self._graph),
+            "Detecting communities": lambda: setattr(
+                self._result,
+                "clusters",
+                process_communities(self._graph),
+            ),
+            "Detecting execution flows": lambda: setattr(
+                self._result,
+                "processes",
+                process_processes(self._graph),
+            ),
+            "Finding dead code": lambda: setattr(
+                self._result,
+                "dead_code",
+                process_dead_code(self._graph),
+            ),
+            "Analyzing git history": lambda: setattr(
+                self._result,
+                "coupled_pairs",
+                process_coupling(self._graph, self._repo_path),
+            ),
+        }
 
-    report("Resolving imports", 0.0)
-    process_imports(parse_data, graph)
-    report("Resolving imports", 1.0)
+    def run_pipelines(self) -> None:
+        """
+        Run phases 1-11 of the ingestion pipeline.
 
-    report("Tracing calls", 0.0)
-    Calls(parse_data, graph).process_calls()
-    report("Tracing calls", 1.0)
+        When *storage* is provided the graph is bulk-loaded into it after
+        all phases complete.  When ``None``, only the in-memory graph is
+        returned (useful for branch comparison snapshots).
+        """
+        start = monotonic()
+        self._walk_files()
 
-    report("Extracting heritage", 0.0)
-    process_heritage(parse_data, graph)
-    report("Extracting heritage", 1.0)
+        for name, pipeline in self._pipelines_dict().items():
+            rprint(f"[b blue]{name}...")
+            pipeline()
 
-    report("Analyzing types", 0.0)
-    process_types(parse_data, graph)
-    report("Analyzing types", 1.0)
+        self._update_rest_result()
+        self._result.duration_seconds = monotonic() - start
 
-    report("Detecting communities", 0.0)
-    result.clusters = process_communities(graph)
-    report("Detecting communities", 1.0)
+    def _walk_files(self) -> None:
 
-    report("Detecting execution flows", 0.0)
-    result.processes = process_processes(graph)
-    report("Detecting execution flows", 1.0)
+        self._gitignore = load_gitignore(self._repo_path)
+        self._files = walk_repo(self._repo_path, self._gitignore)
+        self._result.files = len(self._files)
 
-    report("Finding dead code", 0.0)
-    result.dead_code = process_dead_code(graph)
-    report("Finding dead code", 1.0)
+    def _update_rest_result(self) -> None:
+        self._result.symbols = sum(1 for n in self._graph.iter_nodes() if n.label in _SYMBOL_LABELS)
+        self._result.relationships = self._graph.relationship_count
 
-    report("Analyzing git history", 0.0)
-    result.coupled_pairs = process_coupling(graph, repo_path)
-    report("Analyzing git history", 1.0)
-
-    # Compute result counts before the optional embedding step so a
-    # fastembed failure never leaves symbols/relationships at zero.
-    result.symbols = sum(1 for n in graph.iter_nodes() if n.label in _SYMBOL_LABELS)
-    result.relationships = graph.relationship_count
-
-    if storage is not None:
-        report("Loading to storage", 0.0)
-        storage.bulk_load(graph)
-        report("Loading to storage", 1.0)
-
-        if embeddings:
-            try:
-                report("Generating embeddings", 0.0)
-                node_embeddings = embed_graph(graph)
-                storage.store_embeddings(node_embeddings)
-                result.embeddings = len(node_embeddings)
-                report("Generating embeddings", 1.0)
-            except Exception:
-                import logging as _logging
-
-                _logging.getLogger(__name__).warning(
-                    "Embedding phase failed — search will use FTS only",
-                    exc_info=True,
-                )
-                report("Generating embeddings", 1.0)
-
-    result.duration_seconds = time.monotonic() - start
-
-    return graph, result
+        if self._storage:
+            rprint("[b blue]Loading to storage")
+            self._storage.bulk_load(self._graph)
+            if self._embeddings:
+                try:
+                    rprint("[b blue]Generating embeddings")
+                    node_embeddings = embed_graph(self._graph)
+                    self._storage.store_embeddings(node_embeddings)
+                    self._result.embeddings = len(node_embeddings)
+                except (RuntimeError, ValueError, OSError, SystemError):
+                    logger.warning(
+                        "Embedding phase failed — search will use FTS only",
+                        exc_info=True,
+                    )
 
 
 def reindex_files(
@@ -256,5 +257,6 @@ def build_graph(repo_path: Path) -> KnowledgeGraph:
     This is used by branch comparison to build a graph snapshot without
     needing a storage backend.
     """
-    graph, _ = run_pipeline(repo_path)
-    return graph
+    pipelines = Pipelines(repo_path)
+    pipelines.run_pipelines()
+    return pipelines.graph

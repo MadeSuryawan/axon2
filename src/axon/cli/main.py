@@ -14,15 +14,14 @@ from sys import stderr
 from typing import Any
 
 from mcp.server.stdio import stdio_server
-from rich.console import Console
+from rich import print as rprint
 from rich.logging import RichHandler
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.traceback import install
 from typer import Argument, Exit, Option, Typer, confirm
 
 from axon import __version__
 from axon.core.diff import diff_branches, format_diff
-from axon.core.ingestion.pipeline import PipelineResult, run_pipeline
+from axon.core.ingestion.pipeline import PipelineResult, Pipelines
 from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.core.storage.kuzu_backend import KuzuBackend
 from axon.mcp.server import main as mcp_main
@@ -37,7 +36,6 @@ from axon.mcp.tools import (
     handle_query,
 )
 
-console = Console()
 basicConfig(
     level="NOTSET",
     format="%(message)s",
@@ -45,7 +43,6 @@ basicConfig(
     handlers=[RichHandler(rich_tracebacks=True)],
 )
 logger = getLogger("rich")
-console = Console()
 install()
 
 # Module-level singletons to avoid typer calls in function defaults
@@ -74,10 +71,8 @@ def _get_path(path: Path | None = None) -> tuple[Path, Path, Path]:
     """Return (repo_path, axon_dir, db_path) for the given path."""
     repo_path = Path.cwd().resolve() if not path else path.resolve()
     if not repo_path.is_dir():
-        console.print(f"[red]Error:[/red] {repo_path} is not a directory.")
+        rprint(f"[red]Error:[/red] {repo_path} is not a directory.")
         raise Exit(code=1)
-
-    console.print(f"[bold]Indexing[/bold] {repo_path}")
 
     axon_dir = repo_path / ".axon"
     axon_dir.mkdir(parents=True, exist_ok=True)
@@ -92,7 +87,7 @@ def _load_storage(repo_path: Path | None = None) -> KuzuBackend:
     target = (repo_path or Path.cwd()).resolve()
     db_path = target / ".axon" / "kuzu"
     if not db_path.exists():
-        console.print(
+        rprint(
             f"[red]Error:[/red] No index found at {target}. Run 'axon analyze' first.",
         )
         raise Exit(code=1)
@@ -173,7 +168,7 @@ app = Typer(
 def _version_callback(*, value: bool) -> None:
     """Print the version and exit."""
     if value:
-        console.print(f"Axon v{__version__}")
+        rprint(f"Axon v{__version__}")
         raise Exit()
 
 
@@ -206,27 +201,13 @@ def analyze(
     """Index a repository into a knowledge graph."""
 
     repo_path, axon_dir, db_path = _get_path(path)
+    rprint(f"[b green]Indexing [b magenta]{repo_path}")
     storage = _get_kuzu(db_path)
+    rprint("[b green]KuzuDB initialised")
 
-    result: PipelineResult | None = None
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-        transient=True,
-    ) as progress:
-        task = progress.add_task("Starting...", total=None)
-
-        def on_progress(phase: str, pct: float) -> None:
-            progress.update(task, description=f"{phase} ({pct:.0%})")
-
-        _, result = run_pipeline(
-            repo_path=repo_path,
-            storage=storage,
-            full=full,
-            progress_callback=on_progress,
-            embeddings=not no_embeddings,
-        )
+    pipelines = Pipelines(repo_path, storage, full=full, embeddings=not no_embeddings)
+    pipelines.run_pipelines()
+    result = pipelines.result
 
     meta = _build_meta(result, repo_path)
     meta_path = axon_dir / "meta.json"
@@ -237,22 +218,22 @@ def analyze(
     except (RuntimeError, OSError, SystemError):
         logger.debug("Failed to register repo in global registry", exc_info=True)
 
-    console.print()
-    console.print("[bold green]Indexing complete.[/bold green]")
-    console.print(f"  Files:          {result.files}")
-    console.print(f"  Symbols:        {result.symbols}")
-    console.print(f"  Relationships:  {result.relationships}")
+    rprint()
+    rprint("[bold green]Indexing complete.[/bold green]")
+    rprint(f"  Files:          {result.files}")
+    rprint(f"  Symbols:        {result.symbols}")
+    rprint(f"  Relationships:  {result.relationships}")
     if result.clusters > 0:
-        console.print(f"  Clusters:       {result.clusters}")
+        rprint(f"  Clusters:       {result.clusters}")
     if result.processes > 0:
-        console.print(f"  Flows:          {result.processes}")
+        rprint(f"  Flows:          {result.processes}")
     if result.dead_code > 0:
-        console.print(f"  Dead code:      {result.dead_code}")
+        rprint(f"  Dead code:      {result.dead_code}")
     if result.coupled_pairs > 0:
-        console.print(f"  Coupled pairs:  {result.coupled_pairs}")
+        rprint(f"  Coupled pairs:  {result.coupled_pairs}")
     if result.embeddings > 0:
-        console.print(f"  Embeddings:     {result.embeddings}")
-    console.print(f"  Duration:       {result.duration_seconds:.2f}s")
+        rprint(f"  Embeddings:     {result.embeddings}")
+    rprint(f"  Duration:       {result.duration_seconds:.2f}s")
 
     storage.close()
 
@@ -264,27 +245,27 @@ def status() -> None:
     meta_path = repo_path / ".axon" / "meta.json"
 
     if not meta_path.exists():
-        console.print(f"[red]Error:[/red] No index found at {repo_path}. Run 'axon analyze' first.")
+        rprint(f"[red]Error:[/red] No index found at {repo_path}. Run 'axon analyze' first.")
         raise Exit(code=1)
 
     meta = loads(meta_path.read_text(encoding="utf-8"))
     stats = meta.get("stats", {})
 
-    console.print(f"[bold]Index status for[/bold] {repo_path}")
-    console.print(f"  Version:        {meta.get('version', '?')}")
-    console.print(f"  Last indexed:   {meta.get('last_indexed_at', '?')}")
-    console.print(f"  Files:          {stats.get('files', '?')}")
-    console.print(f"  Symbols:        {stats.get('symbols', '?')}")
-    console.print(f"  Relationships:  {stats.get('relationships', '?')}")
+    rprint(f"[bold]Index status for[/bold] {repo_path}")
+    rprint(f"  Version:        {meta.get('version', '?')}")
+    rprint(f"  Last indexed:   {meta.get('last_indexed_at', '?')}")
+    rprint(f"  Files:          {stats.get('files', '?')}")
+    rprint(f"  Symbols:        {stats.get('symbols', '?')}")
+    rprint(f"  Relationships:  {stats.get('relationships', '?')}")
 
     if stats.get("clusters", 0) > 0:
-        console.print(f"  Clusters:       {stats['clusters']}")
+        rprint(f"  Clusters:       {stats['clusters']}")
     if stats.get("flows", 0) > 0:
-        console.print(f"  Flows:          {stats['flows']}")
+        rprint(f"  Flows:          {stats['flows']}")
     if stats.get("dead_code", 0) > 0:
-        console.print(f"  Dead code:      {stats['dead_code']}")
+        rprint(f"  Dead code:      {stats['dead_code']}")
     if stats.get("coupled_pairs", 0) > 0:
-        console.print(f"  Coupled pairs:  {stats['coupled_pairs']}")
+        rprint(f"  Coupled pairs:  {stats['coupled_pairs']}")
 
 
 @app.command(name="list")
@@ -292,7 +273,7 @@ def list_repos() -> None:
     """List all indexed repositories."""
 
     result = handle_list_repos()
-    console.print(result)
+    rprint(result)
 
 
 @app.command()
@@ -309,15 +290,15 @@ def clean(
     repo_path, axon_dir, _ = _get_path()
 
     if not axon_dir.exists():
-        console.print(f"[red]Error:[/red] No index found at {repo_path}. Nothing to clean.")
+        rprint(f"[red]Error:[/red] No index found at {repo_path}. Nothing to clean.")
         raise Exit(code=1)
 
     if not force and not confirm(f"Delete index at {axon_dir}?"):
-        console.print("Aborted.")
+        rprint("Aborted.")
         raise Exit()
 
     rmtree(axon_dir)
-    console.print(f"[green]Deleted[/green] {axon_dir}")
+    rprint(f"[green]Deleted[/green] {axon_dir}")
 
 
 @app.command()
@@ -329,7 +310,7 @@ def query(
 
     storage = _load_storage()
     result = handle_query(storage, q, limit=limit)
-    console.print(result)
+    rprint(result)
     storage.close()
 
 
@@ -341,7 +322,7 @@ def context(
 
     storage = _load_storage()
     result = handle_context(storage, name)
-    console.print(result)
+    rprint(result)
     storage.close()
 
 
@@ -354,7 +335,7 @@ def impact(
 
     storage = _load_storage()
     result = handle_impact(storage, target, depth=depth)
-    console.print(result)
+    rprint(result)
     storage.close()
 
 
@@ -364,7 +345,7 @@ def dead_code() -> None:
 
     storage = _load_storage()
     result = handle_dead_code(storage)
-    console.print(result)
+    rprint(result)
     storage.close()
 
 
@@ -376,7 +357,7 @@ def cypher(
 
     storage = _load_storage()
     result = handle_cypher(storage, query)
-    console.print(result)
+    rprint(result)
     storage.close()
 
 
@@ -401,14 +382,14 @@ def setup(
     }
 
     if claude or (not claude and not cursor):
-        console.print("[bold]Claude Code[/bold]")
-        console.print("Add to .mcp.json in your project root:")
-        console.print(dumps({"mcpServers": {"axon": mcp_config}}, indent=2))
-        console.print("\n[dim]Or run: claude mcp add axon -- axon serve --watch[/dim]")
+        rprint("[bold]Claude Code[/bold]")
+        rprint("Add to .mcp.json in your project root:")
+        rprint(dumps({"mcpServers": {"axon": mcp_config}}, indent=2))
+        rprint("\n[dim]Or run: claude mcp add axon -- axon serve --watch[/dim]")
 
     if cursor or (not claude and not cursor):
-        console.print("[bold]Add to your Cursor MCP config:[/bold]")
-        console.print(dumps({"axon": mcp_config}, indent=2))
+        rprint("[bold]Add to your Cursor MCP config:[/bold]")
+        rprint(dumps({"axon": mcp_config}, indent=2))
 
 
 @app.command()
@@ -419,15 +400,16 @@ def watch() -> None:
     storage = _get_kuzu(db_path)
 
     if not (axon_dir / "meta.json").exists():
-        console.print("[bold]Running initial index...[/bold]")
-        run_pipeline(repo_path, storage, full=True)
+        rprint("[bold]Running initial index...[/bold]")
+        pipelines = Pipelines(repo_path, storage, full=True)
+        pipelines.run_pipelines()
 
-    console.print(f"[bold]Watching[/bold] {repo_path} for changes (Ctrl+C to stop)")
+    rprint(f"[bold]Watching[/bold] {repo_path} for changes (Ctrl+C to stop)")
     deps = WatcherDeps(repo_path, storage)
     try:
         asyncio_run(Watcher(deps).watch())
     except KeyboardInterrupt:
-        console.print("\n[bold]Watch stopped.[/bold]")
+        rprint("\n[bold]Watch stopped.[/bold]")
     finally:
         storage.close()
 
@@ -445,10 +427,10 @@ def diff(
     try:
         result = diff_branches(repo_path, branch_range)
     except (ValueError, RuntimeError) as exc:
-        console.print(f"[red]Error:[/red] {exc}")
+        rprint(f"[red]Error:[/red] {exc}")
         raise Exit(code=1) from exc
 
-    console.print(format_diff(result))
+    rprint(format_diff(result))
 
 
 @app.command()
@@ -462,20 +444,12 @@ def _check_meta_json(axon_dir: Path, repo_path: Path, storage: KuzuBackend) -> N
     """Check if meta.json exists, and if not, run initial indexing."""
 
     if not (axon_dir / "meta.json").exists():
-        print(f"No index found at {axon_dir}. Running initial index...", file=stderr)
+        rprint(f"[b yellow]No index found at {axon_dir}. Running initial index...", file=stderr)
 
-        def _stderr_progress(phase: str, pct: float) -> None:
-            if pct == 0.0:
-                print(f"  {phase}...", file=stderr, flush=True)
+        pipelines = Pipelines(repo_path, storage, full=True)
+        pipelines.run_pipelines()
 
-        _, result = run_pipeline(
-            repo_path,
-            storage,
-            full=True,
-            progress_callback=_stderr_progress,
-        )
-
-        meta = _build_meta(result, repo_path)
+        meta = _build_meta(pipelines.result, repo_path)
         meta_path = axon_dir / "meta.json"
         meta_path.write_text(dumps(meta, indent=2) + "\n", encoding="utf-8")
 
@@ -532,7 +506,7 @@ def serve(
     storage = _get_kuzu(db_path)
 
     _check_meta_json(axon_dir, repo_path, storage)
-    console.print("[b green]Index complete.")
+    rprint("[b green]Index complete.")
 
     try:
         asyncio_run(_run(repo_path, storage))

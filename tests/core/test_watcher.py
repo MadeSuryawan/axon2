@@ -10,7 +10,7 @@ from subprocess import run as subprocess_run
 import pytest
 
 from axon.core.graph.model import NodeLabel
-from axon.core.ingestion.pipeline import reindex_files, run_pipeline
+from axon.core.ingestion.pipeline import Pipelines, reindex_files
 from axon.core.ingestion.walker import FileEntry, read_file
 from axon.core.ingestion.watcher import (
     Watcher,
@@ -106,7 +106,7 @@ class TestReindexFiles:
         storage: KuzuBackend,
     ) -> None:
         # Initial full index.
-        run_pipeline(tmp_repo, storage)
+        Pipelines(tmp_repo, storage).run_pipelines()
 
         # Verify initial node exists.
         node = storage.get_node("function:src/app.py:hello")
@@ -169,7 +169,7 @@ class TestRepositoryWatcher:
         storage: KuzuBackend,
     ) -> None:
         watcher = Watcher(WatcherDeps(repo_path=tmp_repo, storage=storage))
-        run_pipeline(tmp_repo, storage)
+        Pipelines(tmp_repo, storage).run_pipelines()
 
         # Create a file in an ignored directory.
         cache_dir = tmp_repo / "__pycache__"
@@ -187,7 +187,7 @@ class TestRepositoryWatcher:
         storage: KuzuBackend,
     ) -> None:
         watcher = Watcher(WatcherDeps(repo_path=tmp_repo, storage=storage))
-        run_pipeline(tmp_repo, storage)
+        Pipelines(tmp_repo, storage).run_pipelines()
 
         # File exists in storage but is now deleted from disk.
         deleted_path = tmp_repo / "src" / "app.py"
@@ -273,7 +273,7 @@ class TestRunIncrementalGlobalPhases:
         tmp_repo: Path,
         storage: KuzuBackend,
     ) -> None:
-        run_pipeline(tmp_repo, storage, full=True, embeddings=False)
+        Pipelines(tmp_repo, storage, full=True, embeddings=False).run_pipelines()
 
         watcher = Watcher(WatcherDeps(repo_path=tmp_repo, storage=storage))
         watcher._dirty_files = {"src/app.py"}
