@@ -28,7 +28,7 @@ from axon.config.languages import is_supported
 from axon.core.embeddings.embedder import embed_nodes
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, GraphRelationship, NodeLabel, RelType
-from axon.core.ingestion.community import process_communities
+from axon.core.ingestion.community import Community
 from axon.core.ingestion.coupling import process_coupling
 from axon.core.ingestion.dead_code import process_dead_code
 from axon.core.ingestion.pipeline import reindex_files
@@ -282,7 +282,7 @@ class Watcher:
             - 'processes': Number of processes identified
             - 'dead_code': Number of dead code symbols found
         """
-        num_communities = process_communities(graph)
+        num_communities = Community(graph).process_communities()
         logger.info(f"Communities: {num_communities}")
 
         num_processes = process_processes(graph)

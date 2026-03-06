@@ -34,7 +34,7 @@ from axon.core.embeddings.embedder import embed_graph
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphRelationship, NodeLabel
 from axon.core.ingestion.calls import Calls
-from axon.core.ingestion.community import process_communities
+from axon.core.ingestion.community import Community
 from axon.core.ingestion.coupling import process_coupling
 from axon.core.ingestion.dead_code import process_dead_code
 from axon.core.ingestion.heritage import process_heritage
@@ -129,7 +129,7 @@ class Pipelines:
             "Detecting communities": lambda: setattr(
                 self._result,
                 "clusters",
-                process_communities(self._graph),
+                Community(self._graph).process_communities(),
             ),
             "Detecting execution flows": lambda: setattr(
                 self._result,

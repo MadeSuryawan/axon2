@@ -12,11 +12,7 @@ from axon.core.graph.model import (
     RelType,
     generate_id,
 )
-from axon.core.ingestion.community import (
-    export_to_igraph,
-    generate_label,
-    process_communities,
-)
+from axon.core.ingestion.community import Community
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -117,7 +113,8 @@ class TestExportToIgraph:
 
     def test_export_to_igraph(self, two_cluster_graph: KnowledgeGraph) -> None:
         """Correct vertex and edge count for the two-cluster fixture."""
-        ig_graph, index_map = export_to_igraph(two_cluster_graph)
+        community = Community(two_cluster_graph)
+        ig_graph, index_map = community._export_to_igraph(two_cluster_graph)
 
         # 6 function nodes total.
         assert ig_graph.vcount() == 6
@@ -129,7 +126,8 @@ class TestExportToIgraph:
     def test_export_to_igraph_empty(self) -> None:
         """Empty graph produces an empty igraph."""
         g = KnowledgeGraph()
-        ig_graph, index_map = export_to_igraph(g)
+        community = Community(g)
+        ig_graph, index_map = community._export_to_igraph(g)
 
         assert ig_graph.vcount() == 0
         assert ig_graph.ecount() == 0
@@ -145,10 +143,11 @@ class TestProcessCommunities:
     """process_communities detects clusters and creates graph entities."""
 
     def test_process_communities_creates_nodes(
-        self, two_cluster_graph: KnowledgeGraph,
+        self,
+        two_cluster_graph: KnowledgeGraph,
     ) -> None:
         """Community nodes are created in the graph."""
-        process_communities(two_cluster_graph)
+        Community(two_cluster_graph).process_communities()
 
         community_nodes = two_cluster_graph.get_nodes_by_label(
             NodeLabel.COMMUNITY,
@@ -162,10 +161,11 @@ class TestProcessCommunities:
             assert "cohesion" in node.properties
 
     def test_process_communities_creates_member_of(
-        self, two_cluster_graph: KnowledgeGraph,
+        self,
+        two_cluster_graph: KnowledgeGraph,
     ) -> None:
         """MEMBER_OF relationships are created from members to communities."""
-        process_communities(two_cluster_graph)
+        Community(two_cluster_graph).process_communities()
 
         member_rels = two_cluster_graph.get_relationships_by_type(
             RelType.MEMBER_OF,
@@ -186,10 +186,11 @@ class TestProcessCommunities:
             assert source_node.label in callable_labels
 
     def test_process_communities_returns_count(
-        self, two_cluster_graph: KnowledgeGraph,
+        self,
+        two_cluster_graph: KnowledgeGraph,
     ) -> None:
         """Return value matches the number of Community nodes created."""
-        count = process_communities(two_cluster_graph)
+        count = Community(two_cluster_graph).process_communities()
 
         community_nodes = two_cluster_graph.get_nodes_by_label(
             NodeLabel.COMMUNITY,
@@ -203,7 +204,7 @@ class TestProcessCommunities:
         _add_function(g, "src/a.py", "foo")
         _add_function(g, "src/b.py", "bar")
 
-        result = process_communities(g)
+        result = Community(g).process_communities()
 
         assert result == 0
         assert len(g.get_nodes_by_label(NodeLabel.COMMUNITY)) == 0
@@ -226,7 +227,8 @@ class TestGenerateLabel:
             _add_function(g, "src/auth/token.py", "check_token"),
         ]
 
-        label = generate_label(g, ids)
+        community = Community(g)
+        label = community._generate_label(g, ids)
         assert label == "Auth"
 
     def test_generate_label_mixed_directories(self) -> None:
@@ -238,7 +240,8 @@ class TestGenerateLabel:
             _add_function(g, "src/data/query.py", "query_db"),
         ]
 
-        label = generate_label(g, ids)
+        community = Community(g)
+        label = community._generate_label(g, ids)
         # Most common is "auth" (2 occurrences), second is "data".
         assert label == "Auth+data"
 
@@ -255,5 +258,6 @@ class TestGenerateLabel:
             ),
         )
 
-        label = generate_label(g, [node_id])
+        community = Community(g)
+        label = community._generate_label(g, [node_id])
         assert label == "Cluster"
