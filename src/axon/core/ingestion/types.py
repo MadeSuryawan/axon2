@@ -7,9 +7,7 @@ creating USES_TYPE relationships from Function/Method nodes to the resolved
 type nodes.
 """
 
-from __future__ import annotations
-
-import logging
+from logging import getLogger
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import (
@@ -24,7 +22,7 @@ from axon.core.ingestion.symbol_lookup import (
     find_containing_symbol,
 )
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 _TYPE_LABELS: tuple[NodeLabel, ...] = (
     NodeLabel.CLASS,
@@ -36,6 +34,7 @@ _CONTAINER_LABELS: tuple[NodeLabel, ...] = (
     NodeLabel.FUNCTION,
     NodeLabel.METHOD,
 )
+
 
 def _resolve_type(
     type_name: str,
@@ -76,6 +75,7 @@ def _resolve_type(
     # 2. Global match -- return the first candidate.
     return candidate_ids[0]
 
+
 def process_types(
     parse_data: list[FileParseData],
     graph: KnowledgeGraph,
@@ -104,39 +104,51 @@ def process_types(
     type_index = build_name_index(graph, _TYPE_LABELS)
     file_sym_index = build_file_symbol_index(graph, _CONTAINER_LABELS)
     seen: set[str] = set()
+    no_symbols: list[tuple[str, int, str]] = []
 
     for fpd in parse_data:
         for type_ref in fpd.parse_result.type_refs:
             source_id = find_containing_symbol(
-                type_ref.line, fpd.file_path, file_sym_index,
+                type_ref.line,
+                fpd.file_path,
+                file_sym_index,
             )
             if source_id is None:
-                logger.debug(
-                    "No containing symbol for type ref %s at line %d in %s",
-                    type_ref.name,
-                    type_ref.line,
-                    fpd.file_path,
-                )
+                no_symbols.append((type_ref.name, type_ref.line, fpd.file_path))
                 continue
 
             target_id = _resolve_type(
-                type_ref.name, fpd.file_path, type_index, graph,
+                type_ref.name,
+                fpd.file_path,
+                type_index,
+                graph,
             )
             if target_id is None:
                 continue
 
-            role = type_ref.kind
-            rel_id = f"uses_type:{source_id}->{target_id}:{role}"
-            if rel_id in seen:
-                continue
-            seen.add(rel_id)
+            _add_type_ref_relationship(source_id, target_id, type_ref.kind, seen, graph)
 
-            graph.add_relationship(
-                GraphRelationship(
-                    id=rel_id,
-                    type=RelType.USES_TYPE,
-                    source=source_id,
-                    target=target_id,
-                    properties={"role": role},
-                ),
-            )
+    logger.debug("type refs containing no symbols -> %d", len(no_symbols))
+
+
+def _add_type_ref_relationship(
+    source_id: str,
+    target_id: str,
+    role: str,
+    seen: set[str],
+    graph: KnowledgeGraph,
+) -> None:
+    """Create a deduplicated USES_TYPE relationship."""
+    rel_id = f"uses_type:{source_id}->{target_id}:{role}"
+    if rel_id in seen:
+        return
+    seen.add(rel_id)
+    graph.add_relationship(
+        GraphRelationship(
+            id=rel_id,
+            type=RelType.USES_TYPE,
+            source=source_id,
+            target=target_id,
+            properties={"role": role},
+        ),
+    )
