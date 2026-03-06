@@ -47,7 +47,7 @@ class WatcherDeps:
     lock: Lock | None = None
 
 
-class RepositoryWatcher:
+class Watcher:
     """
     Watcher for a single repository — re-indexes on file changes.
 
@@ -122,24 +122,28 @@ class RepositoryWatcher:
                     self._changed_paths.append(Path(path_str))
 
             # --- Tier 1: Immediate file-local reindex ---
-            await self._reindex_changed_paths()
+            if self._changed_paths:
+                # Copy and clear to avoid accumulation and re-processing
+                batch = self._changed_paths.copy()
+                self._changed_paths.clear()
+                await self._reindex_changed_paths(batch)
+
             # --- Tier 2: Debounced global phases ---
             await self._debounce_global_phases()
 
         logger.info("Watch stopped.")
 
-    async def _reindex_changed_paths(self) -> None:
+    async def _reindex_changed_paths(self, paths: list[Path]) -> None:
         """Re-index changed paths through file-local phases."""
-        if self._changed_paths:
-            _index_result = await self._run_sync(self._reindex_files)
-            _index_result = cast(tuple[int, set[str]], _index_result)
-            count, reindexed = _index_result
-            if reindexed:
-                self._dirty_files |= reindexed
-                last_change_time = monotonic()
-                if self._first_dirty_time == 0.0:
-                    self._first_dirty_time = last_change_time
-                logger.info(f"Reindexed {count} file(s), {len(reindexed)} paths dirty")
+        _index_result = await self._run_sync(lambda: self._reindex_files(paths))
+        _index_result = cast(tuple[int, set[str]], _index_result)
+        count, reindexed = _index_result
+        if reindexed:
+            self._dirty_files |= reindexed
+            self._last_change_time = monotonic()
+            if self._first_dirty_time == 0.0:
+                self._first_dirty_time = self._last_change_time
+            logger.info(f"Reindexed {count} file(s), {len(reindexed)} paths dirty")
 
     async def _debounce_global_phases(self) -> None:
         """Run global phases after a quiet period."""
@@ -172,7 +176,7 @@ class RepositoryWatcher:
                 self._dirty_files |= snapshot
                 self._last_change_time = monotonic()
 
-    def _reindex_files(self) -> tuple[int, set[str]]:
+    def _reindex_files(self, paths: list[Path]) -> tuple[int, set[str]]:
         """
         Re-index changed files through file-local phases.
 
@@ -182,7 +186,7 @@ class RepositoryWatcher:
         entries: list[FileEntry] = []
         reindexed_paths: set[str] = set()
 
-        for abs_path in self._changed_paths:
+        for abs_path in paths:
             if not abs_path.is_file():
                 try:
                     relative = str(abs_path.relative_to(self._repo_path))

@@ -23,7 +23,7 @@ from typer import Argument, Exit, Option, Typer, confirm
 from axon import __version__
 from axon.core.diff import diff_branches, format_diff
 from axon.core.ingestion.pipeline import PipelineResult, run_pipeline
-from axon.core.ingestion.watcher import RepositoryWatcher, WatcherDeps
+from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.core.storage.kuzu_backend import KuzuBackend
 from axon.mcp.server import main as mcp_main
 from axon.mcp.server import server as mcp_server
@@ -424,9 +424,8 @@ def watch() -> None:
 
     console.print(f"[bold]Watching[/bold] {repo_path} for changes (Ctrl+C to stop)")
     deps = WatcherDeps(repo_path, storage)
-    watcher = RepositoryWatcher(deps)
     try:
-        asyncio_run(watcher.watch())
+        asyncio_run(Watcher(deps).watch())
     except KeyboardInterrupt:
         console.print("\n[bold]Watch stopped.[/bold]")
     finally:
@@ -496,7 +495,6 @@ async def _run(
     stop = Event()
 
     deps = WatcherDeps(repo_path, storage, stop_event=stop, lock=lock)
-    watcher = RepositoryWatcher(deps)
 
     async with stdio_server() as (read, write):
 
@@ -510,7 +508,7 @@ async def _run(
 
         await gather(
             _mcp_then_stop(),
-            watcher.watch(),
+            Watcher(deps).watch(),
         )
 
 
