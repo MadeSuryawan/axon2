@@ -35,7 +35,7 @@ from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphRelationship, NodeLabel
 from axon.core.ingestion.calls import Calls
 from axon.core.ingestion.community import Community
-from axon.core.ingestion.coupling import process_coupling
+from axon.core.ingestion.coupling import Coupling
 from axon.core.ingestion.dead_code import DeadCode
 from axon.core.ingestion.heritage import process_heritage
 from axon.core.ingestion.imports import process_imports
@@ -144,7 +144,7 @@ class Pipelines:
             "Analyzing git history": lambda: setattr(
                 self._result,
                 "coupled_pairs",
-                process_coupling(self._graph, self._repo_path),
+                Coupling(self._graph, self._repo_path).process_coupling(),
             ),
         }
 

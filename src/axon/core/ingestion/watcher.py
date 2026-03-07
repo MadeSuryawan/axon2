@@ -29,7 +29,7 @@ from axon.core.embeddings.embedder import embed_nodes
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, GraphRelationship, NodeLabel, RelType
 from axon.core.ingestion.community import Community
-from axon.core.ingestion.coupling import process_coupling
+from axon.core.ingestion.coupling import Coupling
 from axon.core.ingestion.dead_code import DeadCode
 from axon.core.ingestion.pipeline import reindex_files
 from axon.core.ingestion.processes import process_processes
@@ -373,7 +373,7 @@ class Watcher:
             The number of coupling pairs detected.
         """
         self._storage.remove_relationships_by_type(RelType.COUPLED_WITH)
-        num_coupled = process_coupling(graph, self._repo_path)
+        num_coupled = Coupling(graph, self._repo_path).process_coupling()
 
         coupled_rels = list(graph.get_relationships_by_type(RelType.COUPLED_WITH))
         if coupled_rels:
