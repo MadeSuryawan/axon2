@@ -19,8 +19,6 @@ Phases executed:
     11. Change coupling (COUPLED_WITH edges from git history)
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass
 from logging import getLogger
@@ -39,7 +37,7 @@ from axon.core.ingestion.coupling import Coupling
 from axon.core.ingestion.dead_code import DeadCode
 from axon.core.ingestion.heritage import process_heritage
 from axon.core.ingestion.imports import process_imports
-from axon.core.ingestion.parser_phase import FileParseData, process_parsing
+from axon.core.ingestion.parser_phase import FileParseData, Parsing
 from axon.core.ingestion.processes import Processes
 from axon.core.ingestion.structure import Structure
 from axon.core.ingestion.types import process_types
@@ -120,7 +118,7 @@ class Pipelines:
             "Parsing code": lambda: setattr(
                 self,
                 "_parsed_data",
-                process_parsing(self._files, self._graph),
+                Parsing(self._graph).process_parsing(self._files),
             ),
             "Resolving imports": lambda: process_imports(self._parsed_data, self._graph),
             "Tracing calls": lambda: Calls(self._parsed_data, self._graph).process_calls(),
@@ -233,7 +231,7 @@ def reindex_files(
     graph = KnowledgeGraph()
 
     Structure(graph).process_structure(file_entries)
-    parse_data = process_parsing(file_entries, graph)
+    parse_data = Parsing(graph).process_parsing(file_entries)
     process_imports(parse_data, graph)
     Calls(parse_data, graph).process_calls()
     process_heritage(parse_data, graph)
