@@ -41,7 +41,7 @@ from axon.core.ingestion.heritage import process_heritage
 from axon.core.ingestion.imports import process_imports
 from axon.core.ingestion.parser_phase import FileParseData, process_parsing
 from axon.core.ingestion.processes import Processes
-from axon.core.ingestion.structure import process_structure
+from axon.core.ingestion.structure import Structure
 from axon.core.ingestion.types import process_types
 from axon.core.ingestion.walker import FileEntry, walk_repo
 from axon.core.storage.base import StorageBackend
@@ -116,7 +116,7 @@ class Pipelines:
     def _pipelines_dict(self) -> dict[str, Callable]:
 
         return {
-            "Processing structure": lambda: process_structure(self._files, self._graph),
+            "Processing structure": lambda: Structure(self._graph).process_structure(self._files),
             "Parsing code": lambda: setattr(
                 self,
                 "_parsed_data",
@@ -232,7 +232,7 @@ def reindex_files(
 
     graph = KnowledgeGraph()
 
-    process_structure(file_entries, graph)
+    Structure(graph).process_structure(file_entries)
     parse_data = process_parsing(file_entries, graph)
     process_imports(parse_data, graph)
     Calls(parse_data, graph).process_calls()

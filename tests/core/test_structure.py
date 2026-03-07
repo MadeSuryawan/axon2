@@ -6,7 +6,7 @@ import pytest
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import NodeLabel, RelType, generate_id
-from axon.core.ingestion.structure import process_structure
+from axon.core.ingestion.structure import Structure
 from axon.core.ingestion.walker import FileEntry
 
 # ---------------------------------------------------------------------------
@@ -20,9 +20,14 @@ def graph() -> KnowledgeGraph:
     return KnowledgeGraph()
 
 
-def _make_files(*paths: str, content: str = "", language: str = "python") -> list[FileInfo]:
+def _make_files(*paths: str, content: str = "", language: str = "python") -> list[FileEntry]:
     """Build a list of FileInfo entries from paths with shared defaults."""
     return [FileEntry(path=p, content=content, language=language) for p in paths]
+
+
+def _process(files: list[FileEntry], graph: KnowledgeGraph) -> None:
+    """Run the structure processor on the given files."""
+    Structure(graph).process_structure(files)
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +40,7 @@ class TestCreatesFileNodes:
 
     def test_creates_file_nodes(self, graph: KnowledgeGraph) -> None:
         files = _make_files("src/auth/validate.py", "src/auth/crypto.py", "src/models/user.py")
-        process_structure(files, graph)
+        _process(files, graph)
 
         file_nodes = graph.get_nodes_by_label(NodeLabel.FILE)
         assert len(file_nodes) == 3
@@ -51,7 +56,7 @@ class TestCreatesFolderNodes:
 
     def test_creates_folder_nodes(self, graph: KnowledgeGraph) -> None:
         files = _make_files("src/auth/validate.py", "src/models/user.py")
-        process_structure(files, graph)
+        _process(files, graph)
 
         folder_nodes = graph.get_nodes_by_label(NodeLabel.FOLDER)
         folder_paths = {n.file_path for n in folder_nodes}
@@ -67,7 +72,7 @@ class TestCreatesContainsRelationships:
 
     def test_creates_contains_relationships(self, graph: KnowledgeGraph) -> None:
         files = _make_files("src/auth/validate.py", "src/auth/crypto.py")
-        process_structure(files, graph)
+        _process(files, graph)
 
         contains_rels = graph.get_relationships_by_type(RelType.CONTAINS)
 
@@ -89,7 +94,7 @@ class TestNestedFolders:
 
     def test_nested_folders(self, graph: KnowledgeGraph) -> None:
         files = _make_files("a/b/c/file.py")
-        process_structure(files, graph)
+        _process(files, graph)
 
         folder_nodes = graph.get_nodes_by_label(NodeLabel.FOLDER)
         folder_paths = {n.file_path for n in folder_nodes}
@@ -115,7 +120,7 @@ class TestRootLevelFiles:
 
     def test_root_level_files(self, graph: KnowledgeGraph) -> None:
         files = _make_files("README.md", "setup.py")
-        process_structure(files, graph)
+        _process(files, graph)
 
         file_nodes = graph.get_nodes_by_label(NodeLabel.FILE)
         assert len(file_nodes) == 2
@@ -131,7 +136,7 @@ class TestRootLevelFiles:
     def test_root_level_mixed_with_nested(self, graph: KnowledgeGraph) -> None:
         """Root-level files coexist with nested files without errors."""
         files = _make_files("README.md", "src/main.py")
-        process_structure(files, graph)
+        _process(files, graph)
 
         file_nodes = graph.get_nodes_by_label(NodeLabel.FILE)
         assert len(file_nodes) == 2
@@ -154,7 +159,7 @@ class TestNoDuplicateFolders:
             "src/auth/crypto.py",
             "src/auth/tokens.py",
         )
-        process_structure(files, graph)
+        _process(files, graph)
 
         folder_nodes = graph.get_nodes_by_label(NodeLabel.FOLDER)
         folder_paths = [n.file_path for n in folder_nodes]
@@ -175,7 +180,7 @@ class TestFileNodeProperties:
                 language="python",
             ),
         ]
-        process_structure(files, graph)
+        _process(files, graph)
 
         file_id = generate_id(NodeLabel.FILE, "src/auth/validate.py")
         node = graph.get_node(file_id)
@@ -192,7 +197,7 @@ class TestEmptyFileList:
     """test_empty_file_list — empty input produces empty graph."""
 
     def test_empty_file_list(self, graph: KnowledgeGraph) -> None:
-        process_structure([], graph)
+        _process([], graph)
 
         assert list(graph.iter_nodes()) == []
         assert list(graph.iter_relationships()) == []
