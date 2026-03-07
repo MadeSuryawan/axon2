@@ -36,7 +36,7 @@ from axon.core.ingestion.community import Community
 from axon.core.ingestion.coupling import Coupling
 from axon.core.ingestion.dead_code import DeadCode
 from axon.core.ingestion.heritage import process_heritage
-from axon.core.ingestion.imports import process_imports
+from axon.core.ingestion.imports import Imports
 from axon.core.ingestion.parser_phase import FileParseData, Parsing
 from axon.core.ingestion.processes import Processes
 from axon.core.ingestion.structure import Structure
@@ -120,7 +120,7 @@ class Pipelines:
                 "_parsed_data",
                 Parsing(self._graph).process_parsing(self._files),
             ),
-            "Resolving imports": lambda: process_imports(self._parsed_data, self._graph),
+            "Resolving imports": lambda: Imports(self._graph, self._parsed_data).process_imports(),
             "Tracing calls": lambda: Calls(self._parsed_data, self._graph).process_calls(),
             "Extracting heritage": lambda: process_heritage(self._parsed_data, self._graph),
             "Analyzing types": lambda: process_types(self._parsed_data, self._graph),
@@ -232,7 +232,7 @@ def reindex_files(
 
     Structure(graph).process_structure(file_entries)
     parse_data = Parsing(graph).process_parsing(file_entries)
-    process_imports(parse_data, graph)
+    Imports(graph, parse_data).process_imports()
     Calls(parse_data, graph).process_calls()
     process_heritage(parse_data, graph)
     process_types(parse_data, graph)
