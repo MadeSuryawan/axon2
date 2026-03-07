@@ -30,7 +30,7 @@ from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, GraphRelationship, NodeLabel, RelType
 from axon.core.ingestion.community import Community
 from axon.core.ingestion.coupling import process_coupling
-from axon.core.ingestion.dead_code import process_dead_code
+from axon.core.ingestion.dead_code import DeadCode
 from axon.core.ingestion.pipeline import reindex_files
 from axon.core.ingestion.processes import process_processes
 from axon.core.ingestion.walker import FileEntry, read_file
@@ -288,7 +288,7 @@ class Watcher:
         num_processes = process_processes(graph)
         logger.info(f"Processes: {num_processes}")
 
-        num_dead = process_dead_code(graph)
+        num_dead = DeadCode(graph).process_dead_code()
         logger.info(f"Dead code: {num_dead}")
 
         return {

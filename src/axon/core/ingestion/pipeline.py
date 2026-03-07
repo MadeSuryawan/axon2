@@ -36,7 +36,7 @@ from axon.core.graph.model import GraphRelationship, NodeLabel
 from axon.core.ingestion.calls import Calls
 from axon.core.ingestion.community import Community
 from axon.core.ingestion.coupling import process_coupling
-from axon.core.ingestion.dead_code import process_dead_code
+from axon.core.ingestion.dead_code import DeadCode
 from axon.core.ingestion.heritage import process_heritage
 from axon.core.ingestion.imports import process_imports
 from axon.core.ingestion.parser_phase import FileParseData, process_parsing
@@ -139,7 +139,7 @@ class Pipelines:
             "Finding dead code": lambda: setattr(
                 self._result,
                 "dead_code",
-                process_dead_code(self._graph),
+                DeadCode(self._graph).process_dead_code(),
             ),
             "Analyzing git history": lambda: setattr(
                 self._result,
