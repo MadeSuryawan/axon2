@@ -6,7 +6,7 @@ import pytest
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, NodeLabel, RelType, generate_id
-from axon.core.ingestion.heritage import process_heritage
+from axon.core.ingestion.heritage import Heritage
 from axon.core.ingestion.parser_phase import FileParseData
 from axon.core.ingestion.symbol_lookup import build_name_index
 from axon.core.parsers.base import ParseResult
@@ -112,7 +112,8 @@ class TestBuildSymbolIndex:
                 assert node.name == name
 
     def test_index_excludes_non_heritage_labels(
-        self, graph: KnowledgeGraph,
+        self,
+        graph: KnowledgeGraph,
     ) -> None:
         # Add a function node -- it should NOT appear in the index.
         graph.add_node(
@@ -142,7 +143,7 @@ class TestProcessHeritageExtends:
                 [("Dog", "extends", "Animal")],
             ),
         ]
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         assert len(extends_rels) == 1
@@ -152,7 +153,8 @@ class TestProcessHeritageExtends:
         assert rel.target == generate_id(NodeLabel.CLASS, "src/models.py", "Animal")
 
     def test_extends_relationship_id_format(
-        self, graph: KnowledgeGraph,
+        self,
+        graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             _make_parse_data(
@@ -160,7 +162,7 @@ class TestProcessHeritageExtends:
                 [("Dog", "extends", "Animal")],
             ),
         ]
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         rel = extends_rels[0]
@@ -183,7 +185,7 @@ class TestProcessHeritageImplements:
                 [("User", "implements", "Serializable")],
             ),
         ]
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         impl_rels = graph.get_relationships_by_type(RelType.IMPLEMENTS)
         assert len(impl_rels) == 1
@@ -191,11 +193,14 @@ class TestProcessHeritageImplements:
         rel = impl_rels[0]
         assert rel.source == generate_id(NodeLabel.CLASS, "src/models.ts", "User")
         assert rel.target == generate_id(
-            NodeLabel.INTERFACE, "src/types.ts", "Serializable",
+            NodeLabel.INTERFACE,
+            "src/types.ts",
+            "Serializable",
         )
 
     def test_implements_relationship_type(
-        self, graph: KnowledgeGraph,
+        self,
+        graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             _make_parse_data(
@@ -203,7 +208,7 @@ class TestProcessHeritageImplements:
                 [("User", "implements", "Serializable")],
             ),
         ]
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         impl_rels = graph.get_relationships_by_type(RelType.IMPLEMENTS)
         assert impl_rels[0].type == RelType.IMPLEMENTS
@@ -218,7 +223,8 @@ class TestProcessHeritageUnresolvedParent:
     """Heritage referencing an unknown parent is silently skipped."""
 
     def test_process_heritage_unresolved_parent(
-        self, graph: KnowledgeGraph,
+        self,
+        graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             _make_parse_data(
@@ -227,13 +233,14 @@ class TestProcessHeritageUnresolvedParent:
             ),
         ]
         # Should not raise.
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         assert len(extends_rels) == 0
 
     def test_unresolved_child_also_skipped(
-        self, graph: KnowledgeGraph,
+        self,
+        graph: KnowledgeGraph,
     ) -> None:
         parse_data = [
             _make_parse_data(
@@ -241,7 +248,7 @@ class TestProcessHeritageUnresolvedParent:
                 [("Phantom", "extends", "Animal")],
             ),
         ]
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         assert len(extends_rels) == 0
@@ -277,7 +284,7 @@ class TestProcessHeritageMultiple:
                 ],
             ),
         ]
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         impl_rels = graph.get_relationships_by_type(RelType.IMPLEMENTS)
@@ -290,7 +297,8 @@ class TestProcessHeritageMultiple:
         assert total == 3
 
     def test_multiple_heritage_sources_are_correct(
-        self, graph: KnowledgeGraph,
+        self,
+        graph: KnowledgeGraph,
     ) -> None:
         graph.add_node(
             GraphNode(
@@ -310,7 +318,7 @@ class TestProcessHeritageMultiple:
                 ],
             ),
         ]
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         user_id = generate_id(NodeLabel.CLASS, "src/models.ts", "User")
 
@@ -337,7 +345,7 @@ class TestProtocolAnnotation:
                 [("Animal", "extends", "Protocol")],
             ),
         ]
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         animal_id = generate_id(NodeLabel.CLASS, "src/models.py", "Animal")
         animal = graph.get_node(animal_id)
@@ -351,7 +359,7 @@ class TestProtocolAnnotation:
                 [("Animal", "extends", "ABC")],
             ),
         ]
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         animal_id = generate_id(NodeLabel.CLASS, "src/models.py", "Animal")
         animal = graph.get_node(animal_id)
@@ -365,7 +373,7 @@ class TestProtocolAnnotation:
                 [("Dog", "extends", "UnknownBase")],
             ),
         ]
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         dog_id = generate_id(NodeLabel.CLASS, "src/models.py", "Dog")
         dog = graph.get_node(dog_id)
@@ -380,7 +388,7 @@ class TestProtocolAnnotation:
                 [("Animal", "extends", "Protocol")],
             ),
         ]
-        process_heritage(parse_data, graph)
+        Heritage(graph, parse_data).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         assert len(extends_rels) == 0
