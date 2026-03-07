@@ -40,7 +40,7 @@ from axon.core.ingestion.dead_code import DeadCode
 from axon.core.ingestion.heritage import process_heritage
 from axon.core.ingestion.imports import process_imports
 from axon.core.ingestion.parser_phase import FileParseData, process_parsing
-from axon.core.ingestion.processes import process_processes
+from axon.core.ingestion.processes import Processes
 from axon.core.ingestion.structure import process_structure
 from axon.core.ingestion.types import process_types
 from axon.core.ingestion.walker import FileEntry, walk_repo
@@ -134,7 +134,7 @@ class Pipelines:
             "Detecting execution flows": lambda: setattr(
                 self._result,
                 "processes",
-                process_processes(self._graph),
+                Processes(self._graph).process_processes(),
             ),
             "Finding dead code": lambda: setattr(
                 self._result,

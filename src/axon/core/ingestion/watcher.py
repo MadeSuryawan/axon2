@@ -32,7 +32,7 @@ from axon.core.ingestion.community import Community
 from axon.core.ingestion.coupling import Coupling
 from axon.core.ingestion.dead_code import DeadCode
 from axon.core.ingestion.pipeline import reindex_files
-from axon.core.ingestion.processes import process_processes
+from axon.core.ingestion.processes import Processes
 from axon.core.ingestion.walker import FileEntry, read_file
 from axon.core.storage.base import StorageBackend
 
@@ -285,7 +285,7 @@ class Watcher:
         num_communities = Community(graph).process_communities()
         logger.info(f"Communities: {num_communities}")
 
-        num_processes = process_processes(graph)
+        num_processes = Processes(graph).process_processes()
         logger.info(f"Processes: {num_processes}")
 
         num_dead = DeadCode(graph).process_dead_code()
