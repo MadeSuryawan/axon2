@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from logging import getLogger
 from pathlib import Path
 from time import monotonic
+from typing import Any
 
 from rich import print as rprint
 
@@ -111,7 +112,7 @@ class Pipelines:
     def result(self) -> PipelineResult:
         return self._result
 
-    def _pipelines_dict(self) -> dict[str, Callable]:
+    def _phases(self) -> dict[str, Callable[[], None | Any]]:
 
         return {
             "Processing structure": lambda: Structure(self._graph).process_structure(self._files),
@@ -157,18 +158,20 @@ class Pipelines:
         all phases complete.  When ``None``, only the in-memory graph is
         returned (useful for branch comparison snapshots).
         """
+        rprint("[b green]Running pipelines :\n")
         start = monotonic()
         self._walk_files()
 
-        for name, pipeline in self._pipelines_dict().items():
-            rprint(f"[b blue]{name}...")
-            pipeline()
+        _ = [
+            (rprint(f"\n[b blue]{phase}..."), pipeline())
+            for phase, pipeline in self._phases().items()
+        ]
 
         self._update_rest_result()
         self._result.duration_seconds = monotonic() - start
 
     def _walk_files(self) -> None:
-
+        rprint("[b blue]Walking files...")
         self._gitignore = load_gitignore(self._repo_path)
         self._files = walk_repo(self._repo_path, self._gitignore)
         self._result.files = len(self._files)
@@ -178,11 +181,11 @@ class Pipelines:
         self._result.relationships = self._graph.relationship_count
 
         if self._storage:
-            rprint("[b blue]Loading to storage")
+            rprint("\n[b blue]Loading to storage...")
             self._storage.bulk_load(self._graph)
             if self._embeddings:
                 try:
-                    rprint("[b blue]Generating embeddings")
+                    rprint("[b blue]Generating embeddings...")
                     node_embeddings = embed_graph(self._graph)
                     self._storage.store_embeddings(node_embeddings)
                     self._result.embeddings = len(node_embeddings)
@@ -191,6 +194,8 @@ class Pipelines:
                         "Embedding phase failed — search will use FTS only",
                         exc_info=True,
                     )
+                return
+            rprint("\n[b yellow]Embedding disabled — search will use FTS only")
 
 
 def reindex_files(
