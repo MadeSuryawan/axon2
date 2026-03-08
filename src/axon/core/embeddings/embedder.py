@@ -10,25 +10,21 @@ Community, Process) are deliberately skipped — they lack the semantic
 richness that makes embedding worthwhile.
 """
 
-from __future__ import annotations
-
 from functools import lru_cache
-from typing import TYPE_CHECKING
+
+from fastembed import TextEmbedding
 
 from axon.core.embeddings.text import build_class_method_index, generate_text
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import NodeLabel
 from axon.core.storage.base import NodeEmbedding
 
-if TYPE_CHECKING:
-    from fastembed import TextEmbedding
-
 
 @lru_cache(maxsize=4)
 def _get_model(model_name: str) -> TextEmbedding:
-    from fastembed import TextEmbedding
 
     return TextEmbedding(model_name=model_name)
+
 
 # Labels worth embedding — skip Folder, Community, Process (structural only).
 EMBEDDABLE_LABELS: frozenset[NodeLabel] = frozenset(
@@ -42,6 +38,7 @@ EMBEDDABLE_LABELS: frozenset[NodeLabel] = frozenset(
         NodeLabel.ENUM,
     },
 )
+
 
 def embed_graph(
     graph: KnowledgeGraph,
@@ -78,7 +75,7 @@ def embed_graph(
     vectors = list(model.embed(texts, batch_size=batch_size))
 
     results: list[NodeEmbedding] = []
-    for node, vector in zip(nodes, vectors):
+    for node, vector in zip(nodes, vectors, strict=True):
         results.append(
             NodeEmbedding(
                 node_id=node.id,
@@ -110,7 +107,7 @@ def embed_nodes(
 
     texts = [generate_text(n, graph, class_method_idx) for n in nodes]
     embeddings: list[NodeEmbedding] = []
-    for node, vector in zip(nodes, model.embed(texts, batch_size=batch_size)):
+    for node, vector in zip(nodes, model.embed(texts, batch_size=batch_size), strict=True):
         embeddings.append(
             NodeEmbedding(
                 node_id=node.id,
