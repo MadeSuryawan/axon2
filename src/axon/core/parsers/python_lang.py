@@ -19,8 +19,10 @@ Key Responsibilities:
 - Extract type annotations and inheritance relationships
 """
 
-import tree_sitter_python as tspython
+from dataclasses import dataclass
+
 from tree_sitter import Language, Node, Parser
+from tree_sitter_python import language
 
 from axon.core.parsers.base import (
     CallInfo,
@@ -32,33 +34,15 @@ from axon.core.parsers.base import (
 )
 
 
-class PythonParser(LanguageParser):
+class PyTypeExtractor:
     """
-    Parses Python source code using tree-sitter.
+    Extracts type annotations from Python source code.
 
-    This parser extracts structured information from Python source files
-    including symbol definitions, imports, calls, type annotations, and
-    inheritance relationships. The extracted data is used for code analysis,
-    dependency tracking, and knowledge graph construction.
-
-    Attributes:
-        PY_LANGUAGE: The tree-sitter language instance for Python.
-        _BUILTIN_TYPES: Frozenset of Python builtin types to filter out
-            from type reference analysis.
-
-    Example:
-        >>> parser = PythonParser()
-        >>> result = parser.parse("def hello() -> str: pass", "hello.py")
-        >>> result.symbols[0].name
-        'hello'
+    Handles parameter types, return types, variable annotations,
+    and complex type expressions.
     """
-
-    # Language instance - shared across all parser instances for efficiency
-    # Using class variable avoids repeated language initialization
-    PY_LANGUAGE = Language(tspython.language())
 
     # Builtin types that are commonly used but not useful for type analysis.
-    # These are filtered out to reduce noise in the extracted type references.
     _BUILTIN_TYPES: frozenset[str] = frozenset(
         {
             "str",
@@ -79,265 +63,8 @@ class PythonParser(LanguageParser):
         },
     )
 
-    def __init__(self) -> None:
-        """Initialize the Python parser with a tree-sitter parser instance."""
-        self._parser = Parser(self.PY_LANGUAGE)
-
-    def parse(self, content: str, file_path: str) -> ParseResult:
-        """
-        Parse Python source and return structured information.
-
-        This is the main entry point for parsing a Python source file.
-        It performs two phases:
-        1. Walk the AST to extract symbol definitions, imports, and annotations
-        2. Recursively extract function/method calls at each scope boundary
-
-        The two-phase approach avoids double-counting calls that would occur
-        if we extracted them during the initial AST walk.
-
-        Args:
-            content: The Python source code as a string.
-            file_path: The path to the source file (used for context).
-
-        Returns:
-            ParseResult containing all extracted symbols, imports, calls,
-            type references, heritage relationships, and exports.
-        """
-        tree = self._parser.parse(bytes(content, "utf8"))
-        result = ParseResult()
-        root = tree.root_node
-
-        # Phase 1: Extract definitions, imports, and annotations
-        # Pass empty class_name since we're at module level
-        self._walk(root, content, result, class_name="")
-
-        # Phase 2: Extract module-level and nested calls
-        # This is done separately to avoid double-counting
-        self._extract_calls_recursive(root, result)
-
-        return result
-
-    # ---------------------------------------------------------------------------
-    # Core AST Traversal
-    # ---------------------------------------------------------------------------
-
-    def _walk(
-        self,
-        node: Node,
-        content: str,
-        result: ParseResult,
-        class_name: str,
-    ) -> None:
-        """
-        Recursively walk the AST to extract definitions and annotations.
-
-        This method traverses the AST tree, identifying and extracting
-        different types of nodes. Call extraction is intentionally handled
-        separately via _extract_calls_recursive at each scope boundary
-        (module, class, function) to avoid double-counting.
-
-        Args:
-            node: The current AST node to process.
-            content: The source content for text extraction.
-            result: The parse result to populate.
-            class_name: The enclosing class name (empty string for module-level).
-        """
-        for child in node.children:
-            match child.type:
-                case "function_definition":
-                    self._extract_function(child, content, result, class_name)
-                case "class_definition":
-                    self._extract_class(child, content, result)
-                case "import_statement":
-                    self._extract_import(child, result)
-                case "import_from_statement":
-                    self._extract_import_from(child, result)
-                case "decorated_definition":
-                    self._extract_decorated(child, content, result, class_name)
-                case "expression_statement":
-                    # Only extract variable annotations here; calls are
-                    # handled by the scope-level _extract_calls_recursive.
-                    self._extract_annotations_from_expression(child, result)
-                case _:
-                    # Continue recursion for other node types
-                    self._walk(child, content, result, class_name)
-
-    # ---------------------------------------------------------------------------
-    # Function and Method Extraction
-    # ---------------------------------------------------------------------------
-
-    def _extract_function(
-        self,
-        node: Node,
-        content: str,
-        result: ParseResult,
-        class_name: str,
-    ) -> None:
-        """
-        Extract a function or method definition.
-
-        Extracts all relevant information from a function definition node
-        including its name, signature, parameters, return type, and body.
-        Nested functions and classes within the function body are also
-        processed recursively.
-
-        Args:
-            node: The function_definition AST node.
-            content: The source content for text extraction.
-            result: The parse result to populate.
-            class_name: The owning class name (empty for standalone functions).
-        """
-        # Extract function name - early return if missing
-        name_node = node.child_by_field_name("name")
-        if not name_node or not name_node.text:
-            return
-
-        name = name_node.text.decode("utf8")
-        start_line = node.start_point[0] + 1
-        end_line = node.end_point[0] + 1
-        node_content = content[node.start_byte : node.end_byte]
-
-        # Determine kind: methods have an enclosing class, standalone are functions
-        kind = "method" if class_name else "function"
-        signature = self._build_signature(node, content)
-
-        # Add the symbol to results
-        result.symbols.append(
-            SymbolInfo(
-                name=name,
-                kind=kind,
-                start_line=start_line,
-                end_line=end_line,
-                content=node_content,
-                signature=signature,
-                class_name=class_name,
-            ),
-        )
-
-        # Extract parameter type annotations
-        self._extract_param_types(node, result)
-
-        # Extract return type annotation if present and not a builtin
-        return_type = node.child_by_field_name("return_type")
-        if return_type is not None:
-            type_name = self._extract_type_name(return_type)
-            if type_name and type_name not in self._BUILTIN_TYPES:
-                result.type_refs.append(
-                    TypeRef(
-                        name=type_name,
-                        kind="return",
-                        line=return_type.start_point[0] + 1,
-                    ),
-                )
-
-        # Process nested definitions within the function body.
-        # Nested functions/classes inside a function are not methods,
-        # so we pass class_name="" to keep them as standalone symbols.
-        body = node.child_by_field_name("body")
-        if body is not None:
-            self._walk(body, content, result, class_name="")
-
-    def _build_signature(self, func_node: Node, content: str) -> str:
-        """
-        Build a human-readable signature string for a function.
-
-        Constructs a signature in the form:
-        - "def func_name(param1: type1, param2: type2) -> return_type"
-
-        Returns an empty string if required nodes are missing.
-
-        Args:
-            func_node: The function_definition AST node.
-            content: The source content (unused but kept for API consistency).
-
-        Returns:
-            A string representation of the function signature.
-        """
-        # Performance: Use early returns to avoid unnecessary processing
-        name_node = func_node.child_by_field_name("name")
-        params_node = func_node.child_by_field_name("parameters")
-        return_type = func_node.child_by_field_name("return_type")
-
-        if name_node is None or params_node is None:
-            return ""
-
-        if not name_node.text or not params_node.text:
-            return ""
-
-        name = name_node.text.decode("utf8")
-        params = params_node.text.decode("utf8")
-        sig = f"def {name}{params}"
-
-        if return_type is not None:
-            sig += f" -> {return_type.text.decode('utf8')}"
-
-        return sig
-
-    # ---------------------------------------------------------------------------
-    # Parameter Type Extraction
-    # ---------------------------------------------------------------------------
-
-    def _extract_param_types(self, func_node: Node, result: ParseResult) -> None:
-        """
-        Extract type annotations from function parameters.
-
-        Processes both typed_parameter and typed_default_parameter nodes
-        to extract type information for each parameter.
-
-        Args:
-            func_node: The function_definition AST node.
-            result: The parse result to populate with type references.
-        """
-        params_node = func_node.child_by_field_name("parameters")
-        if params_node is None:
-            return
-
-        for param in params_node.children:
-            if param.type in ("typed_parameter", "typed_default_parameter"):
-                self._extract_typed_param(param, result)
-
-    def _extract_typed_param(self, param_node: Node, result: ParseResult) -> None:
-        """
-        Extract a single typed parameter's type reference.
-
-        Extracts the parameter name and its type annotation, creating
-        a TypeRef entry for non-builtin types.
-
-        Args:
-            param_node: A typed_parameter or typed_default_parameter node.
-            result: The parse result to populate with type reference.
-        """
-        # Find the parameter name - iterate through children
-        param_name = ""
-        for child in param_node.children:
-            if child.type == "identifier":
-                if not (text := child.text):
-                    continue
-                param_name = text.decode("utf8")
-                break
-
-        # Extract the type annotation
-        type_node = param_node.child_by_field_name("type")
-        if type_node is None:
-            return
-
-        type_name = self._extract_type_name(type_node)
-        if type_name and type_name not in self._BUILTIN_TYPES:
-            result.type_refs.append(
-                TypeRef(
-                    name=type_name,
-                    kind="param",
-                    line=type_node.start_point[0] + 1,
-                    param_name=param_name,
-                ),
-            )
-
-    # ---------------------------------------------------------------------------
-    # Type Name Extraction
-    # ---------------------------------------------------------------------------
-
     @staticmethod
-    def _extract_type_name(type_node: Node) -> str:
+    def extract_type_name(type_node: Node) -> str:
         """
         Extract the primary type name from a type annotation node.
 
@@ -354,28 +81,29 @@ class PythonParser(LanguageParser):
             The primary type name as a string, or empty string if not found.
         """
         result = ""
+        node_type = type_node.type
 
         # Handle "type" wrapper node (e.g., type[User])
-        if type_node.type == "type" and type_node.children:
+        if node_type == "type" and type_node.children:
             inner = type_node.children[0]
             if inner.type == "identifier":
-                text = inner.text
-                if text:
-                    result = text.decode("utf8")
+                if not (text := inner.text):
+                    return ""
+                result = text.decode("utf8")
             elif inner.type == "generic_type":
                 # e.g., Optional[User] — extract the generic type name
-                result = PythonParser._find_first_identifier(inner)
+                result = PyTypeExtractor._find_first_identifier(inner)
             else:
                 # Fallback: search for first identifier anywhere in the node
-                result = PythonParser._find_first_identifier(inner)
+                result = PyTypeExtractor._find_first_identifier(inner)
         # Handle direct identifier type (e.g., User)
-        elif type_node.type == "identifier":
-            text = type_node.text
-            if text:
-                result = text.decode("utf8")
+        elif node_type == "identifier":
+            if not (text := type_node.text):
+                return ""
+            result = text.decode("utf8")
         # Fallback: DFS for first identifier
         else:
-            result = PythonParser._find_first_identifier(type_node)
+            result = PyTypeExtractor._find_first_identifier(type_node)
 
         return result
 
@@ -394,69 +122,146 @@ class PythonParser(LanguageParser):
             The first identifier's text, or empty string if none found.
         """
         if node.type == "identifier":
-            text = node.text
-            if not text:
+            if not (text := node.text):
                 return ""
             return text.decode("utf8")
+
         for child in node.children:
-            found = PythonParser._find_first_identifier(child)
-            if found:
-                return found
+            if not (found := PyTypeExtractor._find_first_identifier(child)):
+                continue
+            return found
         return ""
 
-    # ---------------------------------------------------------------------------
-    # Decorator Extraction
-    # ---------------------------------------------------------------------------
+    @classmethod
+    def is_builtin_type(cls, type_name: str) -> bool:
+        """Check if the given type name is a builtin type to filter out."""
+        return type_name in cls._BUILTIN_TYPES
 
-    def _extract_decorated(
+    def extract_param_types(
         self,
-        node: Node,
-        content: str,
+        func_node: Node,
         result: ParseResult,
-        class_name: str,
     ) -> None:
         """
-        Extract a decorated function or class, capturing decorator names.
+        Extract type annotations from function parameters.
 
-        Tree-sitter represents decorated definitions with a decorated_definition
-        node containing one or more decorator nodes followed by the actual
-        definition (function_definition or class_definition).
+        Processes both typed_parameter and typed_default_parameter nodes
+        to extract type information for each parameter.
 
         Args:
-            node: The decorated_definition AST node.
-            content: The source content for nested extraction.
-            result: The parse result to populate.
-            class_name: The enclosing class name.
+            func_node: The function_definition AST node.
+            result: The parse result to populate with type references.
         """
-        decorators: list[str] = []
-        definition_node: Node | None = None
-
-        # Parse children to find decorators and the actual definition
-        for child in node.children:
-            if child.type == "decorator":
-                dec_name = self._extract_decorator_name(child)
-                if dec_name:
-                    decorators.append(dec_name)
-            elif child.type in ("function_definition", "class_definition"):
-                definition_node = child
-
-        if definition_node is None:
+        if not (params_node := func_node.child_by_field_name("parameters")):
             return
 
-        # Track symbol count before extraction to associate decorators
-        count_before = len(result.symbols)
+        for param in params_node.children:
+            if param.type not in ("typed_parameter", "typed_default_parameter"):
+                continue
+            self._extract_typed_param(param, result)
 
-        # Extract the underlying definition
-        if definition_node.type == "function_definition":
-            self._extract_function(definition_node, content, result, class_name)
-        else:
-            self._extract_class(definition_node, content, result)
+    def _extract_typed_param(self, param_node: Node, result: ParseResult) -> None:
+        """
+        Extract a single typed parameter's type reference.
 
-        # Attach decorators to the newly added symbol
-        if count_before < len(result.symbols):
-            result.symbols[count_before].decorators = decorators
+        Extracts the parameter name and its type annotation, creating
+        a TypeRef entry for non-builtin types.
 
-    def _extract_decorator_name(self, decorator_node: Node) -> str:
+        Args:
+            param_node: A typed_parameter or typed_default_parameter node.
+            result: The parse result to populate with type reference.
+        """
+        # Find the parameter name - iterate through children
+        param_name = ""
+        for child in param_node.children:
+            if child.type != "identifier":
+                continue
+            if not (text := child.text):
+                continue
+            param_name = text.decode("utf8")
+            break
+
+        # Extract the type annotation
+        if not (type_node := param_node.child_by_field_name("type")):
+            return
+
+        if not (type_name := self.extract_type_name(type_node)) or self.is_builtin_type(type_name):
+            return
+
+        result.type_refs.append(
+            TypeRef(
+                name=type_name,
+                kind="param",
+                line=type_node.start_point[0] + 1,
+                param_name=param_name,
+            ),
+        )
+
+    @classmethod
+    def extract_return_type(cls, func_node: Node, result: ParseResult) -> None:
+        """
+        Extract return type annotation if present and not a builtin.
+
+        Args:
+            func_node: The function_definition AST node.
+            result: The parse result to populate with type references.
+        """
+        if not (
+            (return_type := func_node.child_by_field_name("return_type"))
+            and (type_name := cls.extract_type_name(return_type))
+            and not cls.is_builtin_type(type_name)
+        ):
+            return
+
+        result.type_refs.append(
+            TypeRef(
+                name=type_name,
+                kind="return",
+                line=return_type.start_point[0] + 1,
+            ),
+        )
+
+    def extract_variable_annotation(
+        self,
+        assignment_node: Node,
+        result: ParseResult,
+    ) -> None:
+        """
+        Extract a type reference from a variable annotation if present.
+
+        Handles annotated assignments like "name: str = 'default'".
+        Only extracts non-builtin types.
+
+        Args:
+            assignment_node: An assignment AST node.
+            result: The parse result to populate.
+        """
+        if not (type_node := assignment_node.child_by_field_name("type")):
+            return
+
+        if not (type_name := self.extract_type_name(type_node)) or self.is_builtin_type(type_name):
+            return
+
+        result.type_refs.append(
+            TypeRef(
+                name=type_name,
+                kind="variable",
+                line=type_node.start_point[0] + 1,
+            ),
+        )
+
+
+class PyDecoratorExtractor:
+    """
+    Extracts decorator information from decorated definitions.
+
+    Handles various decorator forms:
+    - Simple: @staticmethod
+    - Attribute: @app.route
+    - Call: @server.list_tools()
+    """
+
+    def extract_decorator_name(self, decorator_node: Node) -> str:
         """
         Extract the dotted name from a decorator node.
 
@@ -474,80 +279,61 @@ class PythonParser(LanguageParser):
         for child in decorator_node.children:
             if not child.text:
                 continue
-            if child.type == "identifier":
+            child_type = child.type
+            if child_type == "identifier":
                 return child.text.decode("utf8")
-            if child.type == "attribute":
+            if child_type == "attribute":
                 return child.text.decode("utf8")
-            if child.type == "call":
-                func = child.child_by_field_name("function")
-                if func and (text := func.text):
-                    return text.decode("utf8")
+            if (
+                child_type == "call"
+                and (func := child.child_by_field_name("function"))
+                and (text := func.text)
+            ):
+                return text.decode("utf8")
         return ""
 
-    # ---------------------------------------------------------------------------
-    # Class Extraction
-    # ---------------------------------------------------------------------------
-
-    def _extract_class(
+    def extract_decorators(
         self,
         node: Node,
-        content: str,
-        result: ParseResult,
-    ) -> None:
+    ) -> tuple[list[str], Node | None]:
         """
-        Extract a class definition and its contents.
-
-        Processes class definitions including:
-        - Class name and location
-        - Superclass relationships (heritage)
-        - Body contents (methods, nested classes)
+        Extract all decorator names from a decorated_definition node.
 
         Args:
-            node: The class_definition AST node.
-            content: The source content for text extraction.
-            result: The parse result to populate.
+            node: The decorated_definition AST node.
+
+        Returns:
+            A tuple of (list of decorator names, the definition node).
         """
-        # Extract class name - early return if missing
-        name_node = node.child_by_field_name("name")
-        if name_node is None or not name_node.text:
-            return
+        decorators: list[str] = []
+        definition_node: Node | None = None
 
-        class_name = name_node.text.decode("utf8")
-        start_line = node.start_point[0] + 1
-        end_line = node.end_point[0] + 1
-        node_content = content[node.start_byte : node.end_byte]
+        # Parse children to find decorators and the actual definition
+        for child in node.children:
+            if child.type == "decorator":
+                dec_name = self.extract_decorator_name(child)
+                if dec_name:
+                    decorators.append(dec_name)
+            elif child.type in ("function_definition", "class_definition"):
+                definition_node = child
 
-        # Add class symbol to results
-        result.symbols.append(
-            SymbolInfo(
-                name=class_name,
-                kind="class",
-                start_line=start_line,
-                end_line=end_line,
-                content=node_content,
-            ),
-        )
+        return decorators, definition_node
 
-        # Extract superclass relationships
-        superclasses = node.child_by_field_name("superclasses")
-        if superclasses is not None:
-            for child in superclasses.children:
-                if child.is_named and child.type == "identifier":
-                    if not (text := child.text):
-                        continue
-                    parent_name = text.decode("utf8")
-                    result.heritage.append((class_name, "extends", parent_name))
 
-        # Process body contents with class_name context
-        body = node.child_by_field_name("body")
-        if body is not None:
-            self._walk(body, content, result, class_name=class_name)
+class PyImportExtractor:
+    """
+    Extracts import statements from Python source code.
 
-    # ---------------------------------------------------------------------------
-    # Import Extraction
-    # ---------------------------------------------------------------------------
+    Handles various import forms:
+    - Simple: import os
+    - Dotted: import os.path
+    - Aliased: import os as operating_system
+    - Multiple: import os, sys
+    - From: from os.path import join
+    - Relative: from . import utils
+    """
 
-    def _extract_import(self, node: Node, result: ParseResult) -> None:
+    def extract_import(self, node: Node, result: ParseResult) -> None:
         """
         Extract a plain ``import X`` statement.
 
@@ -557,28 +343,31 @@ class PythonParser(LanguageParser):
         - Aliased: import os as operating_system
         - Multiple: import os, sys
 
-        For dotted imports like "os.path", extracts "path" as the local name
+        For dotted imports like "import os.path", extracts "path" as the local name
         since that's what's available in the local namespace.
 
         Args:
             node: The import_statement AST node.
             result: The parse result to populate.
         """
+        imports = result.imports
         # import_statement children: "import", dotted_name [, ",", dotted_name ...]
         for child in node.children:
-            if child.type == "dotted_name":
+            child_type = child.type
+            if child_type == "dotted_name":
                 if not (text := child.text):
                     continue
                 module = text.decode("utf8")
                 # For "import os.path" the imported name is "path"
                 parts = module.split(".")
-                result.imports.append(
+                imports.append(
                     ImportInfo(
                         module=module,
                         names=[parts[-1]],
                     ),
                 )
-            elif child.type == "aliased_import":
+                continue
+            if child_type == "aliased_import":
                 # Handle "import X as alias" form
                 alias_node = child.child_by_field_name("alias")
                 if not (name_node := child.child_by_field_name("name")):
@@ -590,7 +379,7 @@ class PythonParser(LanguageParser):
                 alias = ""
                 if alias_node and (text := alias_node.text):
                     alias = text.decode("utf8")
-                result.imports.append(
+                imports.append(
                     ImportInfo(
                         module=module,
                         names=[parts[-1]],
@@ -598,7 +387,7 @@ class PythonParser(LanguageParser):
                     ),
                 )
 
-    def _extract_import_from(self, node: Node, result: ParseResult) -> None:
+    def extract_import_from(self, node: Node, result: ParseResult) -> None:
         """
         Extract a ``from X import Y`` statement.
 
@@ -640,32 +429,173 @@ class PythonParser(LanguageParser):
             ),
         )
 
-    # ---------------------------------------------------------------------------
-    # Variable Annotation and Export Extraction
-    # ---------------------------------------------------------------------------
 
-    def _extract_annotations_from_expression(
-        self,
-        node: Node,
-        result: ParseResult,
-    ) -> None:
+class PyFunctionExtractor:
+    """
+    Extracts function and method definitions from Python source code.
+
+    Handles standalone functions, methods within classes, nested functions,
+    and decorated definitions.
+    """
+
+    def __init__(self, type_extractor: PyTypeExtractor) -> None:
         """
-        Extract variable annotations and __all__ from an expression_statement.
-
-        Handles two cases:
-        - Type annotations: "x: int = 5"
-        - Export declarations: "__all__ = ['foo', 'bar']"
+        Initialize the function extractor.
 
         Args:
-            node: The expression_statement AST node.
-            result: The parse result to populate.
+            type_extractor: The type extractor for parameter/return types.
         """
-        for child in node.children:
-            if child.type == "assignment":
-                self._try_extract_variable_annotation(child, result)
-                self._try_extract_all_exports(child, result)
+        self._type_extractor = type_extractor
 
-    def _try_extract_variable_annotation(
+    def build_signature(self, func_node: Node, content: str) -> str:
+        """
+        Build a human-readable signature string for a function.
+
+        Constructs a signature in the form:
+        - "def func_name(param1: type1, param2: type2) -> return_type"
+
+        Returns an empty string if required nodes are missing.
+
+        Args:
+            func_node: The function_definition AST node.
+            content: The source content (unused but kept for API consistency).
+
+        Returns:
+            A string representation of the function signature.
+        """
+        # Performance: Use early returns to avoid unnecessary processing
+        if not (name_node := func_node.child_by_field_name("name")) or not (
+            params_node := func_node.child_by_field_name("parameters")
+        ):
+            return ""
+
+        if not (name_text := name_node.text) or not (params_text := params_node.text):
+            return ""
+
+        sig = f"def {name_text.decode('utf8')}{params_text.decode('utf8')}"
+
+        if return_type := func_node.child_by_field_name("return_type"):
+            if not (return_type_text := return_type.text):
+                return sig
+            sig += f" -> {return_type_text.decode('utf8')}"
+
+        return sig
+
+    def extract_function(
+        self,
+        node: Node,
+        content: str,
+        result: ParseResult,
+        class_name: str,
+    ) -> None:
+        """
+        Extract a function or method definition.
+
+        Extracts all relevant information from a function definition node
+        including its name, signature, parameters, return type, and body.
+        Nested functions and classes within the function body are also
+        processed recursively.
+
+        Args:
+            node: The function_definition AST node.
+            content: The source content for text extraction.
+            result: The parse result to populate.
+            class_name: The owning class name (empty for standalone functions).
+        """
+        # Extract function name - early return if missing
+        if not (name_node := node.child_by_field_name("name")) or not (name_text := name_node.text):
+            return
+
+        # # Determine kind: methods have an enclosing class, standalone are functions
+        # kind = "method" if class_name else "function"
+        # signature = self.build_signature(node, content)
+
+        # Add the symbol to results
+        result.symbols.append(
+            SymbolInfo(
+                name=name_text.decode("utf8"),
+                kind="method" if class_name else "function",
+                start_line=node.start_point[0] + 1,
+                end_line=node.end_point[0] + 1,
+                content=content[node.start_byte : node.end_byte],
+                signature=self.build_signature(node, content),
+                class_name=class_name,
+            ),
+        )
+
+        # Extract parameter type annotations
+        self._type_extractor.extract_param_types(node, result)
+
+        # Extract return type annotation if present and not a builtin
+        self._type_extractor.extract_return_type(node, result)
+
+
+class PyClassExtractor:
+    """Extracts class definitions and inheritance relationships from Python source."""
+
+    def __init__(self, type_extractor: PyTypeExtractor) -> None:
+        """
+        Initialize the class extractor.
+
+        Args:
+            type_extractor: The type extractor for type annotations.
+        """
+        self._type_extractor = type_extractor
+
+    def extract_class(
+        self,
+        node: Node,
+        content: str,
+        result: ParseResult,
+    ) -> str | None:
+        """
+        Extract a class definition and its contents.
+
+        Processes class definitions including:
+        - Class name and location
+        - Superclass relationships (heritage)
+        - Body contents (methods, nested classes)
+
+        Args:
+            node: The class_definition AST node.
+            content: The source content for text extraction.
+            result: The parse result to populate.
+
+        Returns:
+            The class name if extracted successfully, None otherwise.
+        """
+        # Extract class name - early return if missing
+        if not (name_node := node.child_by_field_name("name")) or not (name_text := name_node.text):
+            return None
+
+        class_name = name_text.decode("utf8")
+
+        # Add class symbol to results
+        result.symbols.append(
+            SymbolInfo(
+                name=class_name,
+                kind="class",
+                start_line=node.start_point[0] + 1,
+                end_line=node.end_point[0] + 1,
+                content=content[node.start_byte : node.end_byte],
+            ),
+        )
+
+        # Extract superclass relationships
+        if not (superclasses := node.child_by_field_name("superclasses")):
+            return class_name
+
+        for child in superclasses.children:
+            if child.is_named and child.type == "identifier":
+                if not (text := child.text):
+                    continue
+                parent_name = text.decode("utf8")
+                result.heritage.append((class_name, "extends", parent_name))
+
+        # Return the class name so the caller can process the body
+        return class_name
+
+    def extract_variable_annotation(
         self,
         assignment_node: Node,
         result: ParseResult,
@@ -673,29 +603,14 @@ class PythonParser(LanguageParser):
         """
         Extract a type reference from a variable annotation if present.
 
-        Handles annotated assignments like "name: str = 'default'".
-        Only extracts non-builtin types.
-
         Args:
             assignment_node: An assignment AST node.
             result: The parse result to populate.
         """
-        type_node = assignment_node.child_by_field_name("type")
-        if type_node is None:
-            return
-
-        type_name = self._extract_type_name(type_node)
-        if type_name and type_name not in self._BUILTIN_TYPES:
-            result.type_refs.append(
-                TypeRef(
-                    name=type_name,
-                    kind="variable",
-                    line=type_node.start_point[0] + 1,
-                ),
-            )
+        self._type_extractor.extract_variable_annotation(assignment_node, result)
 
     @staticmethod
-    def _try_extract_all_exports(assignment_node: Node, result: ParseResult) -> None:
+    def extract_all_exports(assignment_node: Node, result: ParseResult) -> None:
         """
         Extract names from ``__all__ = [...]`` or ``__all__ = (...)`` assignments.
 
@@ -707,10 +622,9 @@ class PythonParser(LanguageParser):
             assignment_node: An assignment AST node.
             result: The parse result to populate with export names.
         """
-        left = assignment_node.child_by_field_name("left")
-        right = assignment_node.child_by_field_name("right")
-
-        if left is None or right is None:
+        if not (left := assignment_node.child_by_field_name("left")) or not (
+            right := assignment_node.child_by_field_name("right")
+        ):
             return
 
         if not (text := left.text):
@@ -726,22 +640,36 @@ class PythonParser(LanguageParser):
 
         # Extract string contents from each element
         for child in right.children:
-            if child.type == "string":
-                if not (text := child.text):
+            if child.type != "string":
+                continue
+            if not (text := child.text):
+                continue
+            text = text.decode("utf8")
+            # Strip surrounding quotes (single, double, or triple)
+            for quote in ('"""', "'''", '"', "'"):
+                if not text.startswith(quote) or not text.endswith(quote):
                     continue
-                text = text.decode("utf8")
-                # Strip surrounding quotes (single, double, or triple)
-                for quote in ('"""', "'''", '"', "'"):
-                    if text.startswith(quote) and text.endswith(quote):
-                        text = text[len(quote) : -len(quote)]
-                        break
-                result.exports.append(text)
+                text = text[len(quote) : -len(quote)]
+                break
+            result.exports.append(text)
 
-    # ---------------------------------------------------------------------------
-    # Call Extraction - Recursive Phase
-    # ---------------------------------------------------------------------------
 
-    def _extract_calls_recursive(self, node: Node, result: ParseResult) -> None:
+class PyCallExtractor:
+    """
+    Extracts function/method calls, exception handlers, and raise statements.
+
+    This extractor handles:
+    - Simple function calls: foo()
+    - Method calls: obj.method()
+    - Chained calls: obj.method1().method2()
+    - Exception handlers: except Error:
+    - Raise statements: raise SomeError
+    """
+
+    def __init__(self) -> None:
+        """Initialize the call extractor."""
+
+    def extract_calls_recursive(self, node: Node, result: ParseResult) -> None:
         """
         Recursively find and extract all call nodes and exception references.
 
@@ -758,131 +686,24 @@ class PythonParser(LanguageParser):
             result: The parse result to populate.
         """
         # Base case: found a call node - extract and recurse into its children
-        if node.type == "call":
+        node_type = node.type
+        if node_type == "call":
             self._extract_call(node, result)
             for child in node.children:
-                self._extract_calls_recursive(child, result)
+                self.extract_calls_recursive(child, result)
             return
 
         # Handle exception handlers: except SomeError:
-        if node.type == "except_clause":
+        if node_type == "except_clause":
             self._extract_exception_handler(node, result)
 
         # Handle raise statements: raise SomeError
-        if node.type == "raise_statement":
+        if node_type == "raise_statement":
             self._extract_raise_statement(node, result)
 
         # Continue recursion for all other node types
         for child in node.children:
-            self._extract_calls_recursive(child, result)
-
-    def _extract_exception_handler(self, node: Node, result: ParseResult) -> None:
-        """
-        Extract exception types from an except clause.
-
-        Handles various exception handler forms:
-        - Single: except Error:
-        - Multiple: except (ErrorA, ErrorB):
-        - Aliased: except Error as e:
-        - Multiple with alias: except (ErrorA, ErrorB) as e:
-
-        Args:
-            node: The except_clause AST node.
-            result: The parse result to populate.
-        """
-        for child in node.children:
-            if child.type == "identifier":
-                # Single exception: except Error:
-                if not (text := child.text):
-                    continue
-                result.calls.append(
-                    CallInfo(
-                        name=text.decode("utf8"),
-                        line=child.start_point[0] + 1,
-                    ),
-                )
-            elif child.type == "tuple":
-                # Multiple exceptions: except (ErrorA, ErrorB):
-                for elem in child.children:
-                    if elem.type != "identifier":
-                        continue
-                    if not (text := elem.text):
-                        continue
-                    result.calls.append(
-                        CallInfo(
-                            name=text.decode("utf8"),
-                            line=elem.start_point[0] + 1,
-                        ),
-                    )
-            elif child.type == "as_pattern":
-                # Aliased exception: except Error as e
-                self._extract_aliased_exception(child, result)
-
-    def _extract_aliased_exception(self, node: Node, result: ParseResult) -> None:
-        """
-        Extract exception types from an aliased except pattern.
-
-        Handles the "as" alias pattern in exception handlers:
-        - except Error as e:
-        - except (ErrorA, ErrorB) as e:
-
-        Args:
-            node: The as_pattern AST node.
-            result: The parse result to populate.
-        """
-        for sub in node.children:
-            if sub.type == "identifier":
-                # Single aliased exception
-                if not (text := sub.text):
-                    continue
-                result.calls.append(
-                    CallInfo(
-                        name=text.decode("utf8"),
-                        line=sub.start_point[0] + 1,
-                    ),
-                )
-                break
-            if sub.type == "tuple":
-                # Multiple aliased exceptions
-                for elem in sub.children:
-                    if elem.type == "identifier":
-                        if not (text := elem.text):
-                            continue
-                        result.calls.append(
-                            CallInfo(
-                                name=text.decode("utf8"),
-                                line=elem.start_point[0] + 1,
-                            ),
-                        )
-                break
-
-    def _extract_raise_statement(self, node: Node, result: ParseResult) -> None:
-        """
-        Extract exception class references from a raise statement.
-
-        Handles "raise SomeError" (without parentheses) which references
-        the exception class rather than instantiating it.
-
-        Args:
-            node: The raise_statement AST node.
-            result: The parse result to populate.
-        """
-        for child in node.children:
-            if child.type != "identifier":
-                continue
-            text = ""
-            if not (text := child.text):
-                continue
-            result.calls.append(
-                CallInfo(
-                    name=text.decode("utf8"),
-                    line=child.start_point[0] + 1,
-                ),
-            )
-
-    # ---------------------------------------------------------------------------
-    # Individual Call Extraction
-    # ---------------------------------------------------------------------------
+            self.extract_calls_recursive(child, result)
 
     def _extract_call(self, call_node: Node, result: ParseResult) -> None:
         """
@@ -900,19 +721,20 @@ class PythonParser(LanguageParser):
         func_node = call_node.child_by_field_name("function")
 
         # Fallback: find first named child if field is missing
-        if func_node is None:
+        if not func_node:
             func_node = self._find_fallback_function_node(call_node)
 
-        if func_node is None:
+        if not func_node:
             return
 
+        node_type = func_node.type
         line = call_node.start_point[0] + 1
         arguments = self._extract_identifier_arguments(call_node)
 
         # Dispatch based on function node type
-        if func_node.type == "identifier":
+        if node_type == "identifier":
             self._extract_simple_call(func_node, line, arguments, result)
-        elif func_node.type == "attribute":
+        elif node_type == "attribute":
             self._extract_method_call(func_node, line, arguments, result)
 
     def _find_fallback_function_node(self, call_node: Node) -> Node | None:
@@ -929,9 +751,9 @@ class PythonParser(LanguageParser):
             The function Node if found, None otherwise.
         """
         for child in call_node.children:
-            if child.is_named:
-                return child
-        return None
+            if not child.is_named:
+                continue
+            return child
 
     def _extract_simple_call(
         self,
@@ -953,9 +775,9 @@ class PythonParser(LanguageParser):
             arguments: List of identifier argument names.
             result: The parse result to populate.
         """
-        text = func_node.text
-        if not text:
+        if not (text := func_node.text):
             return
+
         result.calls.append(
             CallInfo(
                 name=text.decode("utf8"),
@@ -1029,55 +851,19 @@ class PythonParser(LanguageParser):
         receiver = ""
         obj_node = attr_node.children[0] if attr_node.children else None
         if obj_node is not None:
-            if obj_node.type == "identifier":
-                text = obj_node.text
-                if not text:
+            obj_type = obj_node.type
+            if obj_type == "identifier":
+                if not (text := obj_node.text):
                     return method_name, ""
                 receiver = text.decode("utf8")
-            elif obj_node.type == "attribute":
+            elif obj_type == "attribute":
                 # Nested attribute: self.logger.info -> receiver is "self"
                 receiver = self._root_identifier(obj_node)
-            elif obj_node.type == "call":
+            elif obj_type == "call":
                 # Chained call: get_user().save() -> receiver is "get_user"
                 receiver = self._root_identifier(obj_node)
 
         return method_name, receiver
-
-    @staticmethod
-    def _extract_identifier_arguments(call_node: Node) -> list[str]:
-        """
-        Extract bare identifier arguments from a call node.
-
-        Returns names of arguments that are plain identifiers (not literals,
-        calls, or attribute accesses). These are typically callback references
-        like "map(transform, items)" or "Depends(get_db)".
-
-        Args:
-            call_node: The call AST node.
-
-        Returns:
-            List of identifier argument names.
-        """
-        args_node = call_node.child_by_field_name("arguments")
-        if args_node is None:
-            return []
-
-        identifiers: list[str] = []
-        for child in args_node.children:
-            if child.type == "identifier":
-                text = child.text
-                if not text:
-                    continue
-                identifiers.append(text.decode("utf8"))
-            elif child.type == "keyword_argument":
-                # Extract identifier from keyword argument value
-                value_node = child.child_by_field_name("value")
-                if value_node is not None and value_node.type == "identifier":
-                    text = value_node.text
-                    if not text:
-                        continue
-                    identifiers.append(text.decode("utf8"))
-        return identifiers
 
     def _root_identifier(self, node: Node) -> str:
         """
@@ -1097,12 +883,393 @@ class PythonParser(LanguageParser):
         current: Node | None = node
         while current is not None:
             if current.type == "identifier":
-                text = current.text
-                if not text:
+                if not (text := current.text):
                     break
                 return text.decode("utf8")
-            if current.children:
-                current = current.children[0]
-            else:
+            if not (children := current.children):
                 break
+            current = children[0]
         return ""
+
+    @staticmethod
+    def _extract_identifier_arguments(call_node: Node) -> list[str]:
+        """
+        Extract bare identifier arguments from a call node.
+
+        Returns names of arguments that are plain identifiers (not literals,
+        calls, or attribute accesses). These are typically callback references
+        like "map(transform, items)" or "Depends(get_db)".
+
+        Args:
+            call_node: The call AST node.
+
+        Returns:
+            List of identifier argument names.
+        """
+        if not (args_node := call_node.child_by_field_name("arguments")):
+            return []
+
+        identifiers: list[str] = []
+        for child in args_node.children:
+            child_type = child.type
+            if child_type == "identifier":
+                if not (text := child.text):
+                    continue
+                identifiers.append(text.decode("utf8"))
+            elif child_type == "keyword_argument":
+                # Extract identifier from keyword argument value
+                if (
+                    not (value_node := child.child_by_field_name("value"))
+                    or value_node.type != "identifier"
+                ):
+                    continue
+                if not (text := value_node.text):
+                    continue
+                identifiers.append(text.decode("utf8"))
+        return identifiers
+
+    def _extract_exception_handler(self, node: Node, result: ParseResult) -> None:
+        """
+        Extract exception types from an except clause.
+
+        Handles various exception handler forms:
+        - Single: except Error:
+        - Multiple: except (ErrorA, ErrorB):
+        - Aliased: except Error as e:
+        - Multiple with alias: except (ErrorA, ErrorB) as e:
+
+        Args:
+            node: The except_clause AST node.
+            result: The parse result to populate.
+        """
+        for child in node.children:
+            child_type = child.type
+            if child_type == "identifier":
+                # Single exception: except Error:
+                if not (text := child.text):
+                    continue
+                result.calls.append(
+                    CallInfo(
+                        name=text.decode("utf8"),
+                        line=child.start_point[0] + 1,
+                    ),
+                )
+            elif child_type == "tuple":
+                # Multiple exceptions: except (ErrorA, ErrorB):
+                for elem in child.children:
+                    if elem.type != "identifier":
+                        continue
+                    if not (text := elem.text):
+                        continue
+                    result.calls.append(
+                        CallInfo(
+                            name=text.decode("utf8"),
+                            line=elem.start_point[0] + 1,
+                        ),
+                    )
+            elif child_type == "as_pattern":
+                # Aliased exception: except Error as e
+                self._extract_aliased_exception(child, result)
+
+    def _extract_aliased_exception(self, node: Node, result: ParseResult) -> None:
+        """
+        Extract exception types from an aliased except pattern.
+
+        Handles the "as" alias pattern in exception handlers:
+        - except Error as e:
+        - except (ErrorA, ErrorB) as e:
+
+        Args:
+            node: The as_pattern AST node.
+            result: The parse result to populate.
+        """
+        for sub in node.children:
+            if sub.type == "identifier":
+                # Single aliased exception
+                if not (text := sub.text):
+                    continue
+                result.calls.append(
+                    CallInfo(
+                        name=text.decode("utf8"),
+                        line=sub.start_point[0] + 1,
+                    ),
+                )
+                break
+            if sub.type == "tuple":
+                # Multiple aliased exceptions
+                for elem in sub.children:
+                    if elem.type != "identifier":
+                        continue
+                    if not (text := elem.text):
+                        continue
+                    result.calls.append(
+                        CallInfo(
+                            name=text.decode("utf8"),
+                            line=elem.start_point[0] + 1,
+                        ),
+                    )
+                break
+
+    def _extract_raise_statement(self, node: Node, result: ParseResult) -> None:
+        """
+        Extract exception class references from a raise statement.
+
+        Handles "raise SomeError" (without parentheses) which references
+        the exception class rather than instantiating it.
+
+        Args:
+            node: The raise_statement AST node.
+            result: The parse result to populate.
+        """
+        for child in node.children:
+            if child.type != "identifier":
+                continue
+            if not (text := child.text):
+                continue
+            result.calls.append(
+                CallInfo(
+                    name=text.decode("utf8"),
+                    line=child.start_point[0] + 1,
+                ),
+            )
+
+
+@dataclass(frozen=True)
+class BodyContent:
+    node_type: str
+    definition_node: Node
+    content: str
+    result: ParseResult
+    count_before: int
+
+
+class PythonParser(LanguageParser):
+    """
+    Parses Python source code using tree-sitter.
+
+    This parser extracts structured information from Python source files
+    including symbol definitions, imports, calls, type annotations, and
+    inheritance relationships. The extracted data is used for code analysis,
+    dependency tracking, and knowledge graph construction.
+
+    Attributes:
+        PY_LANGUAGE: The tree-sitter language instance for Python.
+        _BUILTIN_TYPES: Frozenset of Python builtin types to filter out
+            from type reference analysis.
+
+    Example:
+        >>> parser = PythonParser()
+        >>> result = parser.parse("def hello() -> str: pass", "hello.py")
+        >>> result.symbols[0].name
+        'hello'
+    """
+
+    # Language instance - shared across all parser instances for efficiency
+    # Using class variable avoids repeated language initialization
+    PY_LANGUAGE = Language(language())
+
+    def __init__(self) -> None:
+        """Initialize the Python parser with a tree-sitter parser instance."""
+        self._parser = Parser(self.PY_LANGUAGE)
+
+        # Initialize extractors
+        self._type_extractor = PyTypeExtractor()
+        self._function_extractor = PyFunctionExtractor(self._type_extractor)
+        self._class_extractor = PyClassExtractor(self._type_extractor)
+        self._import_extractor = PyImportExtractor()
+        self._call_extractor = PyCallExtractor()
+        self._decorator_extractor = PyDecoratorExtractor()
+
+    def parse(self, content: str, file_path: str) -> ParseResult:
+        """
+        Parse Python source and return structured information.
+
+        This is the main entry point for parsing a Python source file.
+        It performs two phases:
+        1. Walk the AST to extract symbol definitions, imports, and annotations
+        2. Recursively extract function/method calls at each scope boundary
+
+        The two-phase approach avoids double-counting calls that would occur
+        if we extracted them during the initial AST walk.
+
+        Args:
+            content: The Python source code as a string.
+            file_path: The path to the source file (used for context).
+
+        Returns:
+            ParseResult containing all extracted symbols, imports, calls,
+            type references, heritage relationships, and exports.
+        """
+        tree = self._parser.parse(bytes(content, "utf8"))
+        result = ParseResult()
+        root = tree.root_node
+
+        # Phase 1: Extract definitions, imports, and annotations
+        # Pass empty class_name since we're at module level
+        self._walk(root, content, result, class_name="")
+
+        # Phase 2: Extract module-level and nested calls
+        # This is done separately to avoid double-counting
+        self._call_extractor.extract_calls_recursive(root, result)
+
+        return result
+
+    # ---------------------------------------------------------------------------
+    # Core AST Traversal
+    # ---------------------------------------------------------------------------
+
+    def _walk(
+        self,
+        node: Node,
+        content: str,
+        result: ParseResult,
+        class_name: str,
+    ) -> None:
+        """
+        Recursively walk the AST to extract definitions and annotations.
+
+        This method traverses the AST tree, identifying and extracting
+        different types of nodes. Call extraction is intentionally handled
+        separately via _extract_calls_recursive at each scope boundary
+        (module, class, function) to avoid double-counting.
+
+        Args:
+            node: The current AST node to process.
+            content: The source content for text extraction.
+            result: The parse result to populate.
+            class_name: The enclosing class name (empty string for module-level).
+        """
+        for child in node.children:
+            match child.type:
+                case "function_definition":
+                    self._function_extractor.extract_function(child, content, result, class_name)
+                    self._walk_function_body(child, content, result)
+                case "class_definition":
+                    args = child, content, result
+                    if extracted_class_name := self._class_extractor.extract_class(*args):
+                        self._walk_class_body(child, content, result, extracted_class_name)
+                case "import_statement":
+                    self._import_extractor.extract_import(child, result)
+                case "import_from_statement":
+                    self._import_extractor.extract_import_from(child, result)
+                case "decorated_definition":
+                    self._extract_decorated(child, content, result, class_name)
+                case "expression_statement":
+                    # Only extract variable annotations here; calls are
+                    # handled by the scope-level _extract_calls_recursive.
+                    self._extract_annotations_from_expression(child, result)
+                case _:
+                    # Continue recursion for other node types
+                    self._walk(child, content, result, class_name)
+
+    def _walk_function_body(
+        self,
+        func_node: Node,
+        content: str,
+        result: ParseResult,
+    ) -> None:
+        """Walk the body of a function to extract nested definitions."""
+        if not (body := func_node.child_by_field_name("body")):
+            return
+        self._walk(body, content, result, class_name="")
+
+    def _walk_class_body(
+        self,
+        class_node: Node,
+        content: str,
+        result: ParseResult,
+        class_name: str,
+    ) -> None:
+        """Walk the body of a class to extract methods and nested definitions."""
+        if not (body := class_node.child_by_field_name("body")):
+            return
+        self._walk(body, content, result, class_name=class_name)
+
+    def _extract_decorated(
+        self,
+        node: Node,
+        content: str,
+        result: ParseResult,
+        class_name: str,
+    ) -> None:
+        """
+        Extract a decorated function or class, capturing decorator names.
+
+        Tree-sitter represents decorated definitions with a decorated_definition
+        node containing one or more decorator nodes followed by the actual
+        definition (function_definition or class_definition).
+
+        Args:
+            node: The decorated_definition AST node.
+            content: The source content for nested extraction.
+            result: The parse result to populate.
+            class_name: The enclosing class name.
+        """
+        decorators, definition_node = self._decorator_extractor.extract_decorators(node)
+
+        if definition_node is None:
+            return
+
+        # Track symbol count before extraction to associate decorators
+        count_before = len(result.symbols)
+        node_type = definition_node.type
+
+        # Extract the underlying definition
+        if node_type == "function_definition":
+            self._function_extractor.extract_function(definition_node, content, result, class_name)
+        elif node_type == "class_definition":
+            self._class_extractor.extract_class(definition_node, content, result)
+
+        # Attach decorators to the newly added symbol
+        if count_before < len(result.symbols):
+            result.symbols[count_before].decorators = decorators
+
+        args = BodyContent(node_type, definition_node, content, result, count_before)
+        self._process_body_content(args)
+
+    def _process_body_content(self, deps: BodyContent) -> None:
+        """Process the body content of a function or class."""
+        # Process body contents if it's a class with the class_name context
+
+        node_type = deps.node_type
+        if (
+            node_type == "class_definition"
+            and (body := deps.definition_node.child_by_field_name("body"))
+            and deps.count_before < len(deps.result.symbols)
+        ):
+            # Get the class name from the symbol we just added
+            new_class_name = deps.result.symbols[deps.count_before].name
+            self._walk(body, deps.content, deps.result, class_name=new_class_name)
+            return
+
+        if node_type == "function_definition" and (
+            body := deps.definition_node.child_by_field_name("body")
+        ):
+            # Process nested definitions within the function body.
+            self._walk(body, deps.content, deps.result, class_name="")
+
+    # ---------------------------------------------------------------------------
+    # Variable Annotation and Export Extraction
+    # ---------------------------------------------------------------------------
+
+    def _extract_annotations_from_expression(
+        self,
+        node: Node,
+        result: ParseResult,
+    ) -> None:
+        """
+        Extract variable annotations and __all__ from an expression_statement.
+
+        Handles two cases:
+        - Type annotations: "x: int = 5"
+        - Export declarations: "__all__ = ['foo', 'bar']"
+
+        Args:
+            node: The expression_statement AST node.
+            result: The parse result to populate.
+        """
+        for child in node.children:
+            if child.type != "assignment":
+                continue
+            self._class_extractor.extract_variable_annotation(child, result)
+            self._class_extractor.extract_all_exports(child, result)
