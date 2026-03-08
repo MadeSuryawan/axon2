@@ -6,18 +6,19 @@ nodes and relationships.  Uses git worktrees to avoid stashing or branch
 switching in the user's working tree.
 """
 
-from __future__ import annotations
-
-import logging
-import subprocess
-import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from logging import getLogger
 from pathlib import Path
+from subprocess import CalledProcessError, run
+from tempfile import TemporaryDirectory
 
+from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, GraphRelationship
+from axon.core.ingestion.pipeline import build_graph
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
+
 
 @dataclass
 class StructuralDiff:
@@ -29,8 +30,10 @@ class StructuralDiff:
     added_relationships: list[GraphRelationship] = field(default_factory=list)
     removed_relationships: list[GraphRelationship] = field(default_factory=list)
 
+
 # Fields checked to determine if a node was "modified".
 _NODE_COMPARE_FIELDS = ("content", "signature", "start_line", "end_line")
+
 
 def diff_graphs(
     base_nodes: dict[str, GraphNode],
@@ -82,12 +85,11 @@ def diff_graphs(
 
     return result
 
+
 def _node_changed(base: GraphNode, current: GraphNode) -> bool:
     """Return True if the two nodes differ on any comparison field."""
-    for attr in _NODE_COMPARE_FIELDS:
-        if getattr(base, attr) != getattr(current, attr):
-            return True
-    return False
+    return any(getattr(base, attr) != getattr(current, attr) for attr in _NODE_COMPARE_FIELDS)
+
 
 def diff_branches(
     repo_path: Path,
@@ -118,7 +120,6 @@ def diff_branches(
         ValueError: If the branch range format is invalid.
         RuntimeError: If git operations fail.
     """
-    from axon.core.ingestion.pipeline import build_graph
 
     if ".." in branch_range:
         parts = branch_range.split("..", 1)
@@ -129,7 +130,8 @@ def diff_branches(
         current_ref = None
 
     if not base_ref:
-        raise ValueError(f"Invalid branch range: {branch_range!r}")
+        details = f"Invalid branch range: {branch_range!r}"
+        raise ValueError(details)
 
     # Build both graphs (in parallel when both need worktrees).
     if current_ref:
@@ -149,50 +151,71 @@ def diff_branches(
 
     return diff_graphs(base_nodes, current_nodes, base_rels, current_rels)
 
-def _build_graph_for_ref(repo_path: Path, ref: str) -> "KnowledgeGraph":
-    """Build an in-memory graph for a git ref using a temporary worktree."""
-    from axon.core.ingestion.pipeline import build_graph
 
-    with tempfile.TemporaryDirectory(prefix="axon_diff_") as tmp_dir:
+def _build_graph_for_ref(repo_path: Path, ref: str) -> KnowledgeGraph:
+    """Build an in-memory graph for a git ref using a temporary worktree."""
+
+    with TemporaryDirectory(prefix="axon_diff_") as tmp_dir:
         worktree_path = Path(tmp_dir) / "worktree"
 
-        try:
-            subprocess.run(
-                ["git", "worktree", "add", str(worktree_path), ref],
-                cwd=repo_path,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(
-                f"Failed to create worktree for ref '{ref}': {exc.stderr.strip()}",
-            ) from exc
+        _create_worktree(["git", "worktree", "add", f"{worktree_path}", ref], repo_path, ref)
+        return _remove_worktree(
+            ["git", "worktree", "remove", "--force", f"{worktree_path}"],
+            repo_path,
+            worktree_path,
+        )
 
-        try:
-            graph = build_graph(worktree_path)
-        finally:
-            try:
-                subprocess.run(
-                    ["git", "worktree", "remove", "--force", str(worktree_path)],
-                    cwd=repo_path,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-            except subprocess.CalledProcessError:
-                logger.warning("Failed to remove worktree at %s", worktree_path)
 
+def _create_worktree(command: list[str], repo_path: Path, ref: str) -> None:
+    """Create a worktree for the given ref."""
+    try:
+        run(command, cwd=repo_path, capture_output=True, text=True, check=True)
+    except CalledProcessError as exc:
+        details = f"Failed to create worktree for ref '{ref}': {exc.stderr.strip()}"
+        raise RuntimeError(details) from exc
+
+
+def _remove_worktree(command: list[str], repo_path: Path, worktree_path: Path) -> KnowledgeGraph:
+    """Remove a worktree."""
+    try:
+        graph = build_graph(worktree_path)
+    finally:
+        try:
+            run(command, cwd=repo_path, capture_output=True, text=True, check=True)
+        except CalledProcessError:
+            logger.warning("Failed to remove worktree at %s", worktree_path)
     return graph
+
+
+def _format_node_line(node: GraphNode, prefix: str) -> str:
+    """Format a single node as a diff line."""
+    label = node.label.value.title()
+    return f"  {prefix} {node.name} ({label}) -- {node.file_path}"
+
+
+def _format_node_section(
+    nodes: list[GraphNode],
+    title: str,
+    prefix: str,
+) -> list[str]:
+    """Format a section of nodes with the given title and prefix."""
+    if not nodes:
+        return []
+    return [
+        f"{title} ({len(nodes)}):",
+        *[_format_node_line(n, prefix) for n in sorted(nodes, key=lambda n: n.id)],
+        "",
+    ]
+
 
 def format_diff(diff: StructuralDiff) -> str:
     """
     Format a StructuralDiff as human-readable output.
 
-    Args:
+    Args :
         diff: The structural diff to format.
 
-    Returns:
+    Returns :
         A multi-line string summarizing added, removed, and modified entities.
     """
     total_changes = (
@@ -206,41 +229,40 @@ def format_diff(diff: StructuralDiff) -> str:
     if total_changes == 0:
         return "No structural differences found."
 
-    lines: list[str] = []
-    lines.append(f"Structural diff: {total_changes} changes")
-    lines.append("")
+    lines: list[str] = [f"Structural diff: {total_changes} changes", ""]
 
-    if diff.added_nodes:
-        lines.append(f"Added nodes ({len(diff.added_nodes)}):")
-        for node in sorted(diff.added_nodes, key=lambda n: n.id):
-            label = node.label.value.title()
-            lines.append(f"  + {node.name} ({label}) -- {node.file_path}")
-        lines.append("")
-
-    if diff.removed_nodes:
-        lines.append(f"Removed nodes ({len(diff.removed_nodes)}):")
-        for node in sorted(diff.removed_nodes, key=lambda n: n.id):
-            label = node.label.value.title()
-            lines.append(f"  - {node.name} ({label}) -- {node.file_path}")
-        lines.append("")
+    lines.extend(_format_node_section(diff.added_nodes, "Added nodes", "+"))
+    lines.extend(_format_node_section(diff.removed_nodes, "Removed nodes", "-"))
 
     if diff.modified_nodes:
-        lines.append(f"Modified nodes ({len(diff.modified_nodes)}):")
-        for base_node, current_node in sorted(diff.modified_nodes, key=lambda p: p[0].id):
-            label = current_node.label.value.title()
-            lines.append(f"  ~ {current_node.name} ({label}) -- {current_node.file_path}")
-        lines.append("")
+        modified = [current for _, current in diff.modified_nodes]
+        lines.extend(_format_node_section(modified, "Modified nodes", "~"))
 
-    if diff.added_relationships:
-        lines.append(f"Added relationships ({len(diff.added_relationships)}):")
-        for rel in sorted(diff.added_relationships, key=lambda r: r.id):
-            lines.append(f"  + [{rel.type.value}] {rel.source} -> {rel.target}")
-        lines.append("")
-
-    if diff.removed_relationships:
-        lines.append(f"Removed relationships ({len(diff.removed_relationships)}):")
-        for rel in sorted(diff.removed_relationships, key=lambda r: r.id):
-            lines.append(f"  - [{rel.type.value}] {rel.source} -> {rel.target}")
-        lines.append("")
+    lines.extend(
+        _format_rel_section(diff.added_relationships, "Added relationships", "+"),
+    )
+    lines.extend(
+        _format_rel_section(diff.removed_relationships, "Removed relationships", "-"),
+    )
 
     return "\n".join(lines).rstrip()
+
+
+def _format_rel_section(
+    relationships: list[GraphRelationship],
+    title: str,
+    prefix: str,
+) -> list[str]:
+    """Format a section of relationships with the given title and prefix."""
+    if not relationships:
+        return []
+    return [
+        f"{title} ({len(relationships)}):",
+        *[_format_rel_line(r, prefix) for r in sorted(relationships, key=lambda r: r.id)],
+        "",
+    ]
+
+
+def _format_rel_line(rel: GraphRelationship, prefix: str) -> str:
+    """Format a single relationship as a diff line."""
+    return f"  {prefix} [{rel.type.value}] {rel.source} -> {rel.target}"
