@@ -79,6 +79,7 @@ class Watcher:
         self._last_known_commit = self._get_head_sha()
         self._changed_paths: list[Path] = []
         self._run_coupling = False
+        self._ignored: set[str] = set()
 
     def _get_head_sha(self) -> str | None:
         """Return the current git HEAD sha, or None if not in a git repo."""
@@ -200,7 +201,8 @@ class Watcher:
             except ValueError:
                 continue
 
-            if should_ignore(relative, self._gitignore):
+            if relative in self._ignored or should_ignore(relative, self._gitignore):
+                self._ignored.add(relative)
                 continue
 
             if not is_supported(abs_path):
