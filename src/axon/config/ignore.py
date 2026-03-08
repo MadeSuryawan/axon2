@@ -1,9 +1,12 @@
 """Ignore-pattern handling for Axon's file discovery."""
 
-from __future__ import annotations
-
-import fnmatch
+from collections.abc import Iterable
+from fnmatch import fnmatch
 from pathlib import Path
+from typing import cast
+
+from pathspec import PathSpec
+from pathspec._typing import AnyStr
 
 DEFAULT_IGNORE_PATTERNS: frozenset[str] = frozenset(
     {
@@ -47,8 +50,12 @@ DEFAULT_IGNORE_PATTERNS: frozenset[str] = frozenset(
 
 # Separate glob patterns (contain wildcards) from literal names at module load
 # so we only compute this once.
-_GLOB_PATTERNS: frozenset[str] = frozenset(p for p in DEFAULT_IGNORE_PATTERNS if "*" in p or "?" in p)
+_GLOB_PATTERNS: frozenset[str] = frozenset(
+    p for p in DEFAULT_IGNORE_PATTERNS if "*" in p or "?" in p
+)
 _LITERAL_PATTERNS: frozenset[str] = DEFAULT_IGNORE_PATTERNS - _GLOB_PATTERNS
+_pathspec_cache: dict[tuple[str, ...], PathSpec] = {}
+
 
 def _matches_default_patterns(path: Path) -> bool:
     """Check whether *path* (relative) matches any default ignore pattern."""
@@ -57,11 +64,10 @@ def _matches_default_patterns(path: Path) -> bool:
             return True
         # Also check globs against every component (e.g. *.pyc as a directory — unlikely but consistent)
         for pattern in _GLOB_PATTERNS:
-            if fnmatch.fnmatch(part, pattern):
+            if fnmatch(part, pattern):
                 return True
     return False
 
-_pathspec_cache: dict[tuple[str, ...], object] = {}
 
 def _matches_gitignore(path: Path, gitignore_patterns: list[str]) -> bool:
     """
@@ -75,22 +81,21 @@ def _matches_gitignore(path: Path, gitignore_patterns: list[str]) -> bool:
         return False
 
     try:
-        import pathspec
-
         cache_key = tuple(gitignore_patterns)
         spec = _pathspec_cache.get(cache_key)
-        if spec is None:
-            spec = pathspec.PathSpec.from_lines("gitignore", gitignore_patterns)
+        if not spec:
+            spec = PathSpec.from_lines("gitignore", cast(Iterable[AnyStr], gitignore_patterns))
             _pathspec_cache[cache_key] = spec
-        return spec.match_file(str(path))  # type: ignore[union-attr]
-    except ImportError:  # pragma: no cover — pathspec is a declared dependency
+        return spec.match_file(str(path))
+    except (RuntimeError, SystemError, OSError):
         path_str = str(path)
         for pattern in gitignore_patterns:
-            if fnmatch.fnmatch(path_str, pattern):
+            if fnmatch(path_str, pattern):
                 return True
-            if fnmatch.fnmatch(path.name, pattern):
+            if fnmatch(path.name, pattern):
                 return True
         return False
+
 
 def should_ignore(
     path: str | Path,
@@ -111,10 +116,8 @@ def should_ignore(
     if _matches_default_patterns(p):
         return True
 
-    if gitignore_patterns and _matches_gitignore(p, gitignore_patterns):
-        return True
+    return bool(gitignore_patterns) and _matches_gitignore(p, gitignore_patterns)
 
-    return False
 
 def load_gitignore(repo_path: Path) -> list[str]:
     """
@@ -130,7 +133,6 @@ def load_gitignore(repo_path: Path) -> list[str]:
     lines: list[str] = []
     text = gitignore.read_text(encoding="utf-8")
     for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if line and not line.startswith("#"):
+        if (line := raw_line.strip()) and not line.startswith("#"):
             lines.append(line)
     return lines
