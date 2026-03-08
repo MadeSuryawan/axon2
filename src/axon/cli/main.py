@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from asyncio import Event, Lock, gather
 from asyncio import run as asyncio_run
+from contextlib import suppress
 from datetime import UTC, datetime
 from hashlib import sha256
 from json import JSONDecodeError, dumps, loads
 from logging import basicConfig, getLogger
 from pathlib import Path
 from shutil import rmtree
-from sys import stderr
+from sys import platform, stderr
 from typing import Any
 
 from mcp.server.stdio import stdio_server
@@ -36,6 +37,21 @@ from axon.mcp.tools import (
     handle_query,
 )
 
+if platform in ("win32", "cygwin", "cli"):
+    with suppress(ImportError):
+        # will not installed on macOS/Linux, ignored Pyrefly(missing-import) error
+        from winloop import install as winloop_install  # type: ignore[import]
+
+        winloop_install()
+        rprint("[b blue]Event loop policy: [b green]winloop (Windows)")
+else:
+    with suppress(ImportError):
+        # will not installed on Windows, ignored Pyrefly(missing-import) error
+        from uvloop import install as uvloop_install  # type: ignore[import]
+
+        uvloop_install()
+        rprint("[b blue]Event loop policy: [b green]uvloop (Linux/macOS)")
+
 basicConfig(
     level="NOTSET",
     format="%(message)s",
@@ -44,6 +60,7 @@ basicConfig(
 )
 logger = getLogger("rich")
 install()
+
 
 # Module-level singletons to avoid typer calls in function defaults
 _REPO_OPTION = Option(
@@ -404,9 +421,11 @@ def watch() -> None:
         pipelines = Pipelines(repo_path, storage, full=True)
         pipelines.run_pipelines()
 
-    rprint(f"[bold]Watching[/bold] {repo_path} for changes (Ctrl+C to stop)")
-    deps = WatcherDeps(repo_path, storage)
     try:
+        deps = WatcherDeps(repo_path, storage)
+        rprint(
+            f"[b blue]Watching [b magenta]{repo_path}[/b magenta] for changes. [white](Ctrl+C to stop)",
+        )
         asyncio_run(Watcher(deps).watch())
     except KeyboardInterrupt:
         rprint("\n[bold]Watch stopped.[/bold]")

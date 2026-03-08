@@ -108,7 +108,6 @@ class Watcher:
     async def watch(self) -> None:
         """Watch loop — monitor files and re-index on changes."""
 
-        logger.info(f"Watching {self._repo_path} for changes...")
         async for changes in awatch(
             self._repo_path,
             rust_timeout=self._POLL_INTERVAL_MS,
@@ -267,7 +266,7 @@ class Watcher:
         logger.info("Hydrating graph from storage...")
         return self._storage.load_graph()
 
-    def _analyze_graph_structure(self, graph: KnowledgeGraph) -> dict[str, int]:
+    def _analyze_graph_structure(self, graph: KnowledgeGraph) -> None:
         """
         Run graph analysis phases to detect communities, processes, and dead code.
 
@@ -290,12 +289,6 @@ class Watcher:
 
         num_dead = DeadCode(graph).process_dead_code()
         logger.info(f"Dead code: {num_dead}")
-
-        return {
-            "communities": num_communities,
-            "processes": num_processes,
-            "dead_code": num_dead,
-        }
 
     def _collect_synthetic_entities(
         self,
