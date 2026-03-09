@@ -1,7 +1,10 @@
 """Tests for the storage backend abstraction layer."""
 
-from __future__ import annotations
+from pathlib import Path
+from typing import Any
 
+from axon.core.graph.graph import KnowledgeGraph
+from axon.core.graph.model import GraphNode, GraphRelationship, RelType
 from axon.core.storage.base import NodeEmbedding, SearchResult, StorageBackend
 
 # ---------------------------------------------------------------------------
@@ -70,6 +73,114 @@ class TestNodeEmbedding:
 # ---------------------------------------------------------------------------
 
 
+class _DummyBackend:
+    def initialize(self, path: Path) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def add_nodes(self, nodes: list[GraphNode]) -> None:
+        pass
+
+    def add_relationships(self, rels: list[GraphRelationship]) -> None:
+        pass
+
+    def remove_nodes_by_file(self, file_path: str) -> int:
+        return 0
+
+    def get_inbound_cross_file_edges(
+        self,
+        file_path: str,
+        exclude_source_files: set[str] | None = None,
+    ) -> list[GraphRelationship]:
+        return []
+
+    def get_node(self, node_id: str) -> GraphNode | None:
+        return None
+
+    def get_callers(self, node_id: str) -> list[GraphNode]:
+        return []
+
+    def get_callees(self, node_id: str) -> list[GraphNode]:
+        return []
+
+    def get_type_refs(self, node_id: str) -> list[GraphNode]:
+        return []
+
+    def get_callers_with_confidence(self, node_id: str) -> list[tuple[GraphNode, float]]:
+        return []
+
+    def get_callees_with_confidence(self, node_id: str) -> list[tuple[GraphNode, float]]:
+        return []
+
+    def traverse(
+        self,
+        start_id: str,
+        depth: int,
+        direction: str = "callers",
+    ) -> list[GraphNode]:
+        return []
+
+    def traverse_with_depth(
+        self,
+        start_id: str,
+        depth: int,
+        direction: str = "callers",
+    ) -> list[tuple[GraphNode, int]]:
+        return []
+
+    def get_process_memberships(self, node_ids: list[str]) -> dict[str, str]:
+        return {}
+
+    def execute_raw(self, query: str) -> list[list[Any]]:
+        return []
+
+    def exact_name_search(self, name: str, limit: int = 5) -> list[SearchResult]:
+        return []
+
+    def fts_search(self, query: str, limit: int) -> list[SearchResult]:
+        return []
+
+    def fuzzy_search(
+        self,
+        query: str,
+        limit: int,
+        max_distance: int = 2,
+    ) -> list[SearchResult]:
+        return []
+
+    def store_embeddings(self, embeddings: list[NodeEmbedding]) -> None:
+        pass
+
+    def vector_search(self, vector: list[float], limit: int) -> list[SearchResult]:
+        return []
+
+    def get_indexed_files(self) -> dict[str, str]:
+        return {}
+
+    def bulk_load(self, graph: KnowledgeGraph) -> None:
+        pass
+
+    def load_graph(self) -> KnowledgeGraph:
+        return KnowledgeGraph()
+
+    def delete_synthetic_nodes(self) -> None:
+        pass
+
+    def upsert_embeddings(self, embeddings: list[NodeEmbedding]) -> None:
+        pass
+
+    def update_dead_flags(self, dead_ids: set[str], alive_ids: set[str]) -> None:
+        pass
+
+    def remove_relationships_by_type(self, rel_type: RelType) -> None:
+        pass
+
+    def rebuild_fts_indexes(self) -> None:
+        pass
+
+
 class TestStorageBackend:
     """Verify the StorageBackend protocol is runtime-checkable."""
 
@@ -78,94 +189,6 @@ class TestStorageBackend:
 
     def test_runtime_checkable(self) -> None:
         """A class implementing all required methods should be recognised."""
-
-        class _DummyBackend:
-            def initialize(self, path):
-                pass
-
-            def close(self):
-                pass
-
-            def add_nodes(self, nodes):
-                pass
-
-            def add_relationships(self, rels):
-                pass
-
-            def remove_nodes_by_file(self, file_path):
-                return 0
-
-            def get_inbound_cross_file_edges(self, file_path, exclude_source_files=None):
-                return []
-
-            def get_node(self, node_id):
-                return None
-
-            def get_callers(self, node_id):
-                return []
-
-            def get_callees(self, node_id):
-                return []
-
-            def get_type_refs(self, node_id):
-                return []
-
-            def get_callers_with_confidence(self, node_id):
-                return []
-
-            def get_callees_with_confidence(self, node_id):
-                return []
-
-            def traverse(self, start_id, depth):
-                return []
-
-            def traverse_with_depth(self, start_id, depth, direction="callers"):
-                return []
-
-            def get_process_memberships(self, node_ids):
-                return {}
-
-            def execute_raw(self, query):
-                return None
-
-            def exact_name_search(self, name, limit=5):
-                return []
-
-            def fts_search(self, query, limit):
-                return []
-
-            def fuzzy_search(self, query, limit, max_distance=2):
-                return []
-
-            def store_embeddings(self, embeddings):
-                pass
-
-            def vector_search(self, vector, limit):
-                return []
-
-            def get_indexed_files(self):
-                return {}
-
-            def bulk_load(self, graph):
-                pass
-
-            def load_graph(self):
-                return None
-
-            def delete_synthetic_nodes(self):
-                pass
-
-            def upsert_embeddings(self, embeddings):
-                pass
-
-            def update_dead_flags(self, dead_ids, alive_ids):
-                pass
-
-            def remove_relationships_by_type(self, rel_type):
-                pass
-
-            def rebuild_fts_indexes(self):
-                pass
 
         assert isinstance(_DummyBackend(), StorageBackend)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ from axon.core.storage.kuzu_backend import KuzuBackend
 
 
 @pytest.fixture()
-def backend(tmp_path: Path) -> KuzuBackend:
+def backend(tmp_path: Path) -> Generator:
     """Return a KuzuBackend initialised in a temporary directory."""
     db_path = tmp_path / "search_test_db"
     b = KuzuBackend()
@@ -32,7 +33,7 @@ def _make_node(
     content: str = "",
     signature: str = "",
 ) -> GraphNode:
-    """Helper to build a GraphNode with a deterministic id."""
+    """Build a GraphNode with a deterministic id."""
     return GraphNode(
         id=generate_id(label, file_path, name),
         label=label,
@@ -123,7 +124,9 @@ class TestFtsSearch:
         """Nodes with the query term in the name should rank above content-only matches."""
         name_match = _make_node(name="target", file_path="src/a.py", content="")
         content_only = _make_node(
-            name="unrelated", file_path="src/c.py", content="has target in body",
+            name="unrelated",
+            file_path="src/c.py",
+            content="has target in body",
         )
         backend.add_nodes([name_match, content_only])
         backend.rebuild_fts_indexes()
@@ -207,10 +210,12 @@ class TestEmbeddingsAndVectorSearch:
         backend.add_nodes([n1, n2])
 
         # close_func embedding is close to query, far_func is orthogonal.
-        backend.store_embeddings([
-            NodeEmbedding(node_id=n1.id, embedding=[0.9, 0.1, 0.0]),
-            NodeEmbedding(node_id=n2.id, embedding=[0.0, 0.0, 1.0]),
-        ])
+        backend.store_embeddings(
+            [
+                NodeEmbedding(node_id=n1.id, embedding=[0.9, 0.1, 0.0]),
+                NodeEmbedding(node_id=n2.id, embedding=[0.0, 0.0, 1.0]),
+            ],
+        )
 
         results = backend.vector_search([1.0, 0.0, 0.0], limit=5)
         assert len(results) == 2
@@ -302,10 +307,7 @@ class TestFuzzySearch:
 
     def test_fuzzy_limit(self, backend: KuzuBackend) -> None:
         """Only *limit* results should be returned."""
-        nodes = [
-            _make_node(name=f"func_{i}", file_path=f"src/f{i}.py")
-            for i in range(5)
-        ]
+        nodes = [_make_node(name=f"func_{i}", file_path=f"src/f{i}.py") for i in range(5)]
         backend.add_nodes(nodes)
 
         results = backend.fuzzy_search("func_0", limit=2, max_distance=2)
@@ -314,7 +316,9 @@ class TestFuzzySearch:
     def test_fuzzy_result_fields(self, backend: KuzuBackend) -> None:
         """SearchResult should have populated fields."""
         node = _make_node(
-            name="my_handler", file_path="src/handlers.py", content="handler body",
+            name="my_handler",
+            file_path="src/handlers.py",
+            content="handler body",
         )
         backend.add_nodes([node])
 

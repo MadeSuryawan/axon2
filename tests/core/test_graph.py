@@ -29,7 +29,7 @@ def _make_node(
     file_path: str = "src/app.py",
     name: str = "my_func",
 ) -> GraphNode:
-    """Helper to build a GraphNode with a deterministic id."""
+    """Build a GraphNode with a deterministic id."""
     return GraphNode(
         id=generate_id(label, file_path, name),
         label=label,
@@ -44,7 +44,7 @@ def _make_rel(
     rel_type: RelType = RelType.CALLS,
     rel_id: str | None = None,
 ) -> GraphRelationship:
-    """Helper to build a GraphRelationship."""
+    """Build a GraphRelationship."""
     return GraphRelationship(
         id=rel_id or f"{rel_type.value}:{source}->{target}",
         type=rel_type,
@@ -72,14 +72,15 @@ class TestAddGetNode:
         node_v2 = GraphNode(id=node_v1.id, label=NodeLabel.FUNCTION, name="foo_updated")
         graph.add_node(node_v1)
         graph.add_node(node_v2)
-        assert graph.get_node(node_v1.id).name == "foo_updated"
+        if node := graph.get_node(node_v1.id):
+            assert node.name == "foo_updated"
 
     def test_nodes_property_returns_all(self, graph: KnowledgeGraph) -> None:
         n1 = _make_node(name="a")
         n2 = _make_node(name="b")
         graph.add_node(n1)
         graph.add_node(n2)
-        assert set(n.id for n in list(graph.iter_nodes())) == {n1.id, n2.id}
+        assert {n.id for n in list(graph.iter_nodes())} == {n1.id, n2.id}
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +113,7 @@ class TestAddRelationship:
         graph.add_relationship(r1)
         graph.add_relationship(r2)
 
-        assert set(r.id for r in list(graph.iter_relationships())) == {"r1", "r2"}
+        assert {r.id for r in list(graph.iter_relationships())} == {"r1", "r2"}
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +251,7 @@ class TestTraversal:
 
         # All outgoing from n1
         out = graph.get_outgoing(n1.id)
-        assert set(r.id for r in out) == {"r1", "r2"}
+        assert {r.id for r in out} == {"r1", "r2"}
 
         # Outgoing from n1 filtered to CALLS only
         out_calls = graph.get_outgoing(n1.id, rel_type=RelType.CALLS)
@@ -272,7 +273,7 @@ class TestTraversal:
 
         # All incoming to n3
         inc = graph.get_incoming(n3.id)
-        assert set(r.id for r in inc) == {"r1", "r2"}
+        assert {r.id for r in inc} == {"r1", "r2"}
 
         # Incoming to n3 filtered to IMPORTS only
         inc_imports = graph.get_incoming(n3.id, rel_type=RelType.IMPORTS)

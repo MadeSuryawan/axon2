@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from axon.core.graph.graph import KnowledgeGraph
@@ -38,33 +40,42 @@ def _add_file_node(graph: KnowledgeGraph, path: str) -> str:
     return node_id
 
 
+@dataclass(frozen=True)
+class SymbolNodeInfo:
+    """Parameters for adding a symbol node to the graph."""
+
+    graph: KnowledgeGraph
+    label: NodeLabel
+    file_path: str
+    name: str
+    start_line: int
+    end_line: int
+    class_name: str = ""
+
+
 def _add_symbol_node(
-    graph: KnowledgeGraph,
-    label: NodeLabel,
-    file_path: str,
-    name: str,
-    start_line: int,
-    end_line: int,
-    class_name: str = "",
+    deps: SymbolNodeInfo,
 ) -> str:
     """Add a symbol node with a DEFINES relationship from the file node."""
     symbol_name = (
-        f"{class_name}.{name}" if label == NodeLabel.METHOD and class_name else name
+        f"{deps.class_name}.{deps.name}"
+        if deps.label == NodeLabel.METHOD and deps.class_name
+        else deps.name
     )
-    node_id = generate_id(label, file_path, symbol_name)
-    graph.add_node(
+    node_id = generate_id(deps.label, deps.file_path, symbol_name)
+    deps.graph.add_node(
         GraphNode(
             id=node_id,
-            label=label,
-            name=name,
-            file_path=file_path,
-            start_line=start_line,
-            end_line=end_line,
-            class_name=class_name,
+            label=deps.label,
+            name=deps.name,
+            file_path=deps.file_path,
+            start_line=deps.start_line,
+            end_line=deps.end_line,
+            class_name=deps.class_name,
         ),
     )
-    file_id = generate_id(NodeLabel.FILE, file_path)
-    graph.add_relationship(
+    file_id = generate_id(NodeLabel.FILE, deps.file_path)
+    deps.graph.add_relationship(
         GraphRelationship(
             id=f"defines:{file_id}->{node_id}",
             type=RelType.DEFINES,
@@ -103,14 +114,51 @@ def graph() -> KnowledgeGraph:
     _add_file_node(g, "src/types.ts")
 
     # Symbols in src/auth.py
-    _add_symbol_node(g, NodeLabel.FUNCTION, "src/auth.py", "validate", 1, 10)
+
+    _add_symbol_node(
+        SymbolNodeInfo(
+            graph=g,
+            label=NodeLabel.FUNCTION,
+            file_path="src/auth.py",
+            name="validate",
+            start_line=1,
+            end_line=10,
+        ),
+    )
 
     # Symbols in src/models.py
-    _add_symbol_node(g, NodeLabel.CLASS, "src/models.py", "User", 1, 20)
-    _add_symbol_node(g, NodeLabel.CLASS, "src/models.py", "Config", 22, 40)
+    _add_symbol_node(
+        SymbolNodeInfo(
+            graph=g,
+            label=NodeLabel.CLASS,
+            file_path="src/models.py",
+            name="User",
+            start_line=1,
+            end_line=20,
+        ),
+    )
+    _add_symbol_node(
+        SymbolNodeInfo(
+            graph=g,
+            label=NodeLabel.CLASS,
+            file_path="src/models.py",
+            name="Config",
+            start_line=22,
+            end_line=40,
+        ),
+    )
 
     # Symbols in src/types.ts
-    _add_symbol_node(g, NodeLabel.INTERFACE, "src/types.ts", "AuthResult", 1, 10)
+    _add_symbol_node(
+        SymbolNodeInfo(
+            graph=g,
+            label=NodeLabel.INTERFACE,
+            file_path="src/types.ts",
+            name="AuthResult",
+            start_line=1,
+            end_line=10,
+        ),
+    )
 
     return g
 
@@ -162,7 +210,9 @@ class TestBuildTypeIndex:
         assert index["User"] == [expected_user]
 
         expected_auth_result = generate_id(
-            NodeLabel.INTERFACE, "src/types.ts", "AuthResult",
+            NodeLabel.INTERFACE,
+            "src/types.ts",
+            "AuthResult",
         )
         assert index["AuthResult"] == [expected_auth_result]
 
@@ -173,7 +223,16 @@ class TestBuildTypeIndex:
         """TypeAlias nodes are included."""
         g = KnowledgeGraph()
         _add_file_node(g, "src/aliases.py")
-        _add_symbol_node(g, NodeLabel.TYPE_ALIAS, "src/aliases.py", "UserID", 1, 1)
+        _add_symbol_node(
+            SymbolNodeInfo(
+                graph=g,
+                label=NodeLabel.TYPE_ALIAS,
+                file_path="src/aliases.py",
+                name="UserID",
+                start_line=1,
+                end_line=1,
+            ),
+        )
 
         index = build_name_index(g, _TYPE_LABELS)
         assert "UserID" in index
@@ -184,8 +243,26 @@ class TestBuildTypeIndex:
         g = KnowledgeGraph()
         _add_file_node(g, "src/a.py")
         _add_file_node(g, "src/b.py")
-        _add_symbol_node(g, NodeLabel.CLASS, "src/a.py", "Base", 1, 10)
-        _add_symbol_node(g, NodeLabel.CLASS, "src/b.py", "Base", 1, 10)
+        _add_symbol_node(
+            SymbolNodeInfo(
+                graph=g,
+                label=NodeLabel.CLASS,
+                file_path="src/a.py",
+                name="Base",
+                start_line=1,
+                end_line=10,
+            ),
+        )
+        _add_symbol_node(
+            SymbolNodeInfo(
+                graph=g,
+                label=NodeLabel.CLASS,
+                file_path="src/b.py",
+                name="Base",
+                start_line=1,
+                end_line=10,
+            ),
+        )
 
         index = build_name_index(g, _TYPE_LABELS)
         assert "Base" in index
@@ -214,7 +291,9 @@ class TestProcessTypesCreatesUsesType:
         pairs = {(r.source, r.target) for r in uses_rels}
 
         validate_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate",
+            NodeLabel.FUNCTION,
+            "src/auth.py",
+            "validate",
         )
         user_id = generate_id(NodeLabel.CLASS, "src/models.py", "User")
         config_id = generate_id(NodeLabel.CLASS, "src/models.py", "Config")
@@ -254,7 +333,8 @@ class TestProcessTypesUnresolvedSkipped:
     """Unknown type names don't crash and produce no relationships."""
 
     def test_process_types_unresolved_skipped(
-        self, graph: KnowledgeGraph,
+        self,
+        graph: KnowledgeGraph,
     ) -> None:
         unresolved_data = [
             FileParseData(
@@ -288,7 +368,8 @@ class TestProcessTypesNoDuplicates:
     """Same type used twice in the same role doesn't duplicate edges."""
 
     def test_process_types_no_duplicates(
-        self, graph: KnowledgeGraph,
+        self,
+        graph: KnowledgeGraph,
     ) -> None:
         # Two param references to User inside validate (same role).
         duplicate_data = [
@@ -321,7 +402,8 @@ class TestProcessTypesReturnType:
     """Return type annotation creates USES_TYPE with role='return'."""
 
     def test_process_types_return_type(
-        self, graph: KnowledgeGraph,
+        self,
+        graph: KnowledgeGraph,
     ) -> None:
         return_data = [
             FileParseData(
@@ -342,7 +424,9 @@ class TestProcessTypesReturnType:
 
         rel = uses_rels[0]
         validate_id = generate_id(
-            NodeLabel.FUNCTION, "src/auth.py", "validate",
+            NodeLabel.FUNCTION,
+            "src/auth.py",
+            "validate",
         )
         user_id = generate_id(NodeLabel.CLASS, "src/models.py", "User")
 

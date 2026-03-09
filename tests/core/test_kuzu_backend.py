@@ -1,7 +1,7 @@
 """Tests for the KuzuDB storage backend."""
 
-from __future__ import annotations
-
+from collections.abc import Generator
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -23,7 +23,7 @@ from axon.core.storage.kuzu_backend import KuzuBackend
 
 
 @pytest.fixture()
-def backend(tmp_path: Path) -> KuzuBackend:
+def backend(tmp_path: Path) -> Generator[KuzuBackend]:
     """Return a KuzuBackend initialised in a temporary directory."""
     db_path = tmp_path / "test_db"
     b = KuzuBackend()
@@ -38,7 +38,7 @@ def _make_node(
     name: str = "my_func",
     content: str = "",
 ) -> GraphNode:
-    """Helper to build a GraphNode with a deterministic id."""
+    """Build a GraphNode with a deterministic id."""
     return GraphNode(
         id=generate_id(label, file_path, name),
         label=label,
@@ -54,7 +54,7 @@ def _make_rel(
     rel_type: RelType = RelType.CALLS,
     rel_id: str | None = None,
 ) -> GraphRelationship:
-    """Helper to build a GraphRelationship."""
+    """Build a GraphRelationship."""
     return GraphRelationship(
         id=rel_id or f"{rel_type.value}:{source}->{target}",
         type=rel_type,
@@ -104,7 +104,8 @@ class TestInitializeAndClose:
 
 class TestBulkLoad:
     def test_bulk_load_inserts_nodes_and_relationships(
-        self, backend: KuzuBackend,
+        self,
+        backend: KuzuBackend,
     ) -> None:
         graph = _build_small_graph()
         backend.bulk_load(graph)
@@ -259,9 +260,8 @@ class TestGetIndexedFiles:
         result = backend.get_indexed_files()
         assert "src/main.py" in result
         # The hash should be the sha256 of the content.
-        import hashlib
 
-        expected_hash = hashlib.sha256(b"print('hello')").hexdigest()
+        expected_hash = sha256(b"print('hello')").hexdigest()
         assert result["src/main.py"] == expected_hash
 
 
@@ -326,8 +326,10 @@ class TestMultipleLabels:
 
         assert backend.get_node(fn.id) is not None
         assert backend.get_node(cls.id) is not None
-        assert backend.get_node(fn.id).label == NodeLabel.FUNCTION
-        assert backend.get_node(cls.id).label == NodeLabel.CLASS
+        if node := backend.get_node(fn.id):
+            assert node.label == NodeLabel.FUNCTION
+        if node := backend.get_node(cls.id):
+            assert node.label == NodeLabel.CLASS
 
 
 # ---------------------------------------------------------------------------
@@ -393,15 +395,20 @@ class TestLoadGraph:
 
 class TestDeleteSyntheticNodes:
     def test_removes_community_and_process_keeps_function(
-        self, backend: KuzuBackend,
+        self,
+        backend: KuzuBackend,
     ) -> None:
         """Store fn + community + process with edges. After delete, only fn remains."""
         fn = _make_node(name="real_func", file_path="src/a.py")
         comm = _make_node(
-            label=NodeLabel.COMMUNITY, name="comm_1", file_path="",
+            label=NodeLabel.COMMUNITY,
+            name="comm_1",
+            file_path="",
         )
         proc = _make_node(
-            label=NodeLabel.PROCESS, name="proc_1", file_path="",
+            label=NodeLabel.PROCESS,
+            name="proc_1",
+            file_path="",
         )
         backend.add_nodes([fn, comm, proc])
 
@@ -449,13 +456,13 @@ class TestUpsertEmbeddings:
         backend.store_embeddings([emb])
 
         updated = NodeEmbedding(
-            node_id="function:src/a.py:alpha", embedding=[9.0, 8.0],
+            node_id="function:src/a.py:alpha",
+            embedding=[9.0, 8.0],
         )
         backend.upsert_embeddings([updated])
 
         rows = backend.execute_raw(
-            "MATCH (e:Embedding) WHERE e.node_id = 'function:src/a.py:alpha' "
-            "RETURN e.vec",
+            "MATCH (e:Embedding) WHERE e.node_id = 'function:src/a.py:alpha' RETURN e.vec",
         )
         assert len(rows) == 1
         assert rows[0][0][0] == 9.0
