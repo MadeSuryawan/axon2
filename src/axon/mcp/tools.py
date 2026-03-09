@@ -15,16 +15,14 @@ from logging import getLogger
 from pathlib import Path
 from re import IGNORECASE, MULTILINE
 from re import compile as re_compile
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from axon.config.constants import MODEL_NAME, SYSTEM_EXCEPTIONS
 from axon.core.embeddings.embedder import get_model
+from axon.core.graph.model import GraphNode
 from axon.core.search.hybrid import SearchDeps, hybrid_search
 from axon.core.storage.base import StorageBackend
 from axon.mcp.resources import get_dead_code_list
-
-if TYPE_CHECKING:
-    from axon.core.graph.model import GraphNode
 
 logger = getLogger(__name__)
 
