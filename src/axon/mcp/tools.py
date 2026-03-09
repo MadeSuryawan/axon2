@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from axon.core.search.hybrid import hybrid_search
+from axon.core.search.hybrid import SearchDeps, hybrid_search
 from axon.core.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,8 @@ MAX_TRAVERSE_DEPTH = 10
 def _escape_cypher(value: str) -> str:
     """Escape a string for safe inclusion in a Cypher string literal."""
     return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
 _EMBED_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 
@@ -44,6 +46,7 @@ def _resolve_symbol(storage: StorageBackend, symbol: str) -> list:
         if results:
             return results
     return storage.fts_search(symbol, limit=1)
+
 
 def handle_list_repos(registry_dir: Path | None = None) -> str:
     """
@@ -102,6 +105,7 @@ def handle_list_repos(registry_dir: Path | None = None) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
 
 def _group_by_process(
     results: list,
@@ -195,12 +199,20 @@ def handle_query(storage: StorageBackend, query: str, limit: int = 20) -> str:
     except Exception:
         logger.debug("Query embedding failed, falling back to FTS only", exc_info=True)
 
-    results = hybrid_search(query, storage, query_embedding=query_embedding, limit=limit)
+    results = hybrid_search(
+        SearchDeps(
+            query=query,
+            storage=storage,
+            query_embedding=query_embedding,
+            limit=limit,
+        ),
+    )
     if not results:
         return f"No results found for '{query}'."
 
     groups = _group_by_process(results, storage)
     return _format_query_results(results, groups)
+
 
 def handle_context(storage: StorageBackend, symbol: str) -> str:
     """
@@ -266,6 +278,7 @@ def handle_context(storage: StorageBackend, symbol: str) -> str:
     lines.append("Next: Use impact() if planning changes to this symbol.")
     return "\n".join(lines)
 
+
 _DEPTH_LABELS: dict[int, str] = {
     1: "Direct callers (will break)",
     2: "Indirect (may break)",
@@ -298,7 +311,9 @@ def handle_impact(storage: StorageBackend, symbol: str, depth: int = 3) -> str:
         return f"Symbol '{symbol}' not found."
 
     affected_with_depth = storage.traverse_with_depth(
-        start_node.id, depth, direction="callers",
+        start_node.id,
+        depth,
+        direction="callers",
     )
     if not affected_with_depth:
         return f"No upstream callers found for '{symbol}'."
@@ -330,14 +345,14 @@ def handle_impact(storage: StorageBackend, symbol: str, depth: int = 3) -> str:
             conf = conf_lookup.get(node.id)
             tag = f"  (confidence: {conf:.2f})" if conf is not None else ""
             lines.append(
-                f"  {counter}. {node.name} ({label}) -- "
-                f"{node.file_path}:{node.start_line}{tag}",
+                f"  {counter}. {node.name} ({label}) -- {node.file_path}:{node.start_line}{tag}",
             )
             counter += 1
 
     lines.append("")
     lines.append("Tip: Review each affected symbol before making changes.")
     return "\n".join(lines)
+
 
 def handle_dead_code(storage: StorageBackend) -> str:
     """
@@ -356,8 +371,10 @@ def handle_dead_code(storage: StorageBackend) -> str:
 
     return get_dead_code_list(storage)
 
+
 _DIFF_FILE_PATTERN = re.compile(r"^diff --git a/(.+?) b/(.+?)$", re.MULTILINE)
 _DIFF_HUNK_PATTERN = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
+
 
 def handle_detect_changes(storage: StorageBackend, diff: str) -> str:
     """
@@ -441,10 +458,12 @@ def handle_detect_changes(storage: StorageBackend, diff: str) -> str:
     lines.append("Next: Use impact() on affected symbols to see downstream effects.")
     return "\n".join(lines)
 
+
 _WRITE_KEYWORDS = re.compile(
     r"\b(DELETE|DROP|CREATE|SET|REMOVE|MERGE|DETACH|INSTALL|LOAD|COPY|CALL)\b",
     re.IGNORECASE,
 )
+
 
 def handle_cypher(storage: StorageBackend, query: str) -> str:
     """
