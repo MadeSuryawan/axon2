@@ -1,6 +1,7 @@
 """Tests for the branch diff module (diff.py)."""
 
-from __future__ import annotations
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
 from axon.core.diff import StructuralDiff, diff_graphs, format_diff
 from axon.core.graph.model import (
@@ -15,25 +16,59 @@ from axon.core.graph.model import (
 # ---------------------------------------------------------------------------
 
 
-def _node(nid: str, label: NodeLabel = NodeLabel.FUNCTION, **kwargs) -> GraphNode:
+@dataclass
+class GraphDeps:
+    """
+    Test helper dataclass for creating GraphNode instances with default values.
+
+    Mirrors GraphNode fields but with sensible defaults for testing.
+    """
+
+    name: str = ""
+    file_path: str = "src/app.py"
+    start_line: int = 0
+    end_line: int = 0
+    content: str = ""
+    signature: str = ""
+    language: str = ""
+    class_name: str = ""
+
+    is_dead: bool = False
+    is_entry_point: bool = False
+    is_exported: bool = False
+    properties: dict[str, Any] = field(default_factory=dict)
+
+
+def _node(
+    nid: str,
+    deps: GraphDeps | None = None,
+    label: NodeLabel = NodeLabel.FUNCTION,
+) -> GraphNode:
     """Create a GraphNode with sensible defaults."""
-    return GraphNode(
-        id=nid,
-        label=label,
-        name=kwargs.pop("name", nid.split(":")[-1] or nid),
-        file_path=kwargs.pop("file_path", "src/app.py"),
-        **kwargs,
-    )
+    default_name = nid.split(":", maxsplit=1)[-1] or nid
+
+    if deps is None:
+        deps = GraphDeps(name=default_name)
+    elif not deps.name:
+        deps.name = default_name
+
+    return GraphNode(id=nid, label=label, **asdict(deps))
 
 
-def _rel(rid: str, rel_type: RelType = RelType.CALLS, **kwargs) -> GraphRelationship:
+def _rel(
+    rid: str,
+    rel_type: RelType = RelType.CALLS,
+    source: str = "a",
+    target: str = "b",
+    properties: dict | None = None,
+) -> GraphRelationship:
     """Create a GraphRelationship with sensible defaults."""
     return GraphRelationship(
         id=rid,
         type=rel_type,
-        source=kwargs.pop("source", "a"),
-        target=kwargs.pop("target", "b"),
-        **kwargs,
+        source=source,
+        target=target,
+        properties=properties or {},
     )
 
 
@@ -53,6 +88,7 @@ class TestDiffGraphsAddedNodes:
 
         assert len(result.added_nodes) == 1
         assert result.added_nodes[0].id == "n1"
+        assert result.added_nodes[0].name == "n1"
         assert result.removed_nodes == []
         assert result.modified_nodes == []
 
@@ -68,6 +104,7 @@ class TestDiffGraphsRemovedNodes:
 
         assert len(result.removed_nodes) == 1
         assert result.removed_nodes[0].id == "n1"
+        assert result.removed_nodes[0].name == "n1"
         assert result.added_nodes == []
 
 
@@ -75,8 +112,8 @@ class TestDiffGraphsModifiedContent:
     """Nodes with same ID but different content are detected as modified."""
 
     def test_modified_content(self) -> None:
-        base = {"n1": _node("n1", content="old body")}
-        current = {"n1": _node("n1", content="new body")}
+        base = {"n1": _node("n1", GraphDeps(content="old body"))}
+        current = {"n1": _node("n1", GraphDeps(content="new body"))}
 
         result = diff_graphs(base, current, {}, {})
 
@@ -91,8 +128,8 @@ class TestDiffGraphsModifiedSignature:
     """Nodes with same ID but different signature are detected as modified."""
 
     def test_modified_signature(self) -> None:
-        base = {"n1": _node("n1", signature="def foo()")}
-        current = {"n1": _node("n1", signature="def foo(x: int)")}
+        base = {"n1": _node("n1", GraphDeps(signature="def foo()"))}
+        current = {"n1": _node("n1", GraphDeps(signature="def foo(x: int)"))}
 
         result = diff_graphs(base, current, {}, {})
 
@@ -103,8 +140,8 @@ class TestDiffGraphsModifiedLines:
     """Nodes with same ID but different line numbers are detected as modified."""
 
     def test_modified_start_line(self) -> None:
-        base = {"n1": _node("n1", start_line=10, end_line=20)}
-        current = {"n1": _node("n1", start_line=15, end_line=25)}
+        base = {"n1": _node("n1", GraphDeps(start_line=10, end_line=20))}
+        current = {"n1": _node("n1", GraphDeps(start_line=15, end_line=25))}
 
         result = diff_graphs(base, current, {}, {})
 
@@ -115,7 +152,7 @@ class TestDiffGraphsUnchangedNodes:
     """Identical nodes produce no diff entries."""
 
     def test_unchanged(self) -> None:
-        n = _node("n1", content="body", signature="def f()")
+        n = _node("n1", GraphDeps(content="body", signature="def f()"))
         base = {"n1": n}
         current = {"n1": n}
 
@@ -176,14 +213,14 @@ class TestDiffGraphsMixedChanges:
 
     def test_mixed(self) -> None:
         base_nodes = {
-            "n1": _node("n1", content="old"),
-            "n2": _node("n2", content="same"),
-            "n3": _node("n3", content="removed"),
+            "n1": _node("n1", GraphDeps(content="old")),
+            "n2": _node("n2", GraphDeps(content="same")),
+            "n3": _node("n3", GraphDeps(content="removed")),
         }
         current_nodes = {
-            "n1": _node("n1", content="new"),
-            "n2": _node("n2", content="same"),
-            "n4": _node("n4", content="added"),
+            "n1": _node("n1", GraphDeps(content="new")),
+            "n2": _node("n2", GraphDeps(content="same")),
+            "n4": _node("n4", GraphDeps(content="added")),
         }
         base_rels = {
             "r1": _rel("r1"),
@@ -229,7 +266,7 @@ class TestFormatDiffAddedNodes:
     """Added nodes appear with + prefix."""
 
     def test_added(self) -> None:
-        diff = StructuralDiff(added_nodes=[_node("n1", name="my_func")])
+        diff = StructuralDiff(added_nodes=[_node("n1", GraphDeps(name="my_func"))])
         result = format_diff(diff)
 
         assert "+ my_func" in result
@@ -241,7 +278,7 @@ class TestFormatDiffRemovedNodes:
     """Removed nodes appear with - prefix."""
 
     def test_removed(self) -> None:
-        diff = StructuralDiff(removed_nodes=[_node("n1", name="old_func")])
+        diff = StructuralDiff(removed_nodes=[_node("n1", GraphDeps(name="old_func"))])
         result = format_diff(diff)
 
         assert "- old_func" in result
@@ -254,7 +291,10 @@ class TestFormatDiffModifiedNodes:
     def test_modified(self) -> None:
         diff = StructuralDiff(
             modified_nodes=[
-                (_node("n1", name="changed_func"), _node("n1", name="changed_func")),
+                (
+                    _node("n1", GraphDeps(name="changed_func")),
+                    _node("n1", GraphDeps(name="changed_func")),
+                ),
             ],
         )
         result = format_diff(diff)

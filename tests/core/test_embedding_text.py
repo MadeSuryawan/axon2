@@ -8,6 +8,9 @@ context (edges, neighbours, signatures, etc.).
 
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
 from axon.core.embeddings.text import generate_text
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import (
@@ -23,24 +26,34 @@ from axon.core.graph.model import (
 # ---------------------------------------------------------------------------
 
 
-def _node(
-    label: NodeLabel,
-    name: str,
-    file_path: str = "",
-    signature: str = "",
-    class_name: str = "",
-    **extra: object,
-) -> GraphNode:
+@dataclass
+class GraphDeps:
+    """
+    Test helper dataclass for creating GraphNode instances with default values.
+
+    Mirrors GraphNode fields but with sensible defaults for testing.
+    Mainly intention is to avoid type errors and make test code more concise.
+    """
+
+    label: NodeLabel
+    name: str = ""
+    file_path: str = "src/app.py"
+    start_line: int = 0
+    end_line: int = 0
+    content: str = ""
+    signature: str = ""
+    language: str = ""
+    class_name: str = ""
+
+    is_dead: bool = False
+    is_entry_point: bool = False
+    is_exported: bool = False
+    properties: dict[str, Any] = field(default_factory=dict)
+
+
+def _node(deps: GraphDeps) -> GraphNode:
     """Build a ``GraphNode`` with a deterministic id."""
-    return GraphNode(
-        id=generate_id(label, file_path, name),
-        label=label,
-        name=name,
-        file_path=file_path,
-        signature=signature,
-        class_name=class_name,
-        **({"properties": extra} if extra else {}),
-    )
+    return GraphNode(id=generate_id(deps.label, deps.file_path, deps.name), **asdict(deps))
 
 
 def _rel(
@@ -76,10 +89,12 @@ class TestFunctionText:
         """Text includes name, file path, and signature."""
         graph = KnowledgeGraph()
         fn = _node(
-            NodeLabel.FUNCTION,
-            "validate_user",
-            file_path="src/auth.py",
-            signature="def validate_user(user: User) -> bool",
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="validate_user",
+                file_path="src/auth.py",
+                signature="def validate_user(user: User) -> bool",
+            ),
         )
         graph.add_node(fn)
 
@@ -92,10 +107,34 @@ class TestFunctionText:
     def test_function_with_calls(self) -> None:
         """Text lists callees (outgoing CALLS) and callers (incoming CALLS)."""
         graph = KnowledgeGraph()
-        fn = _node(NodeLabel.FUNCTION, "validate_user", file_path="src/auth.py")
-        callee1 = _node(NodeLabel.FUNCTION, "check_password", file_path="src/auth.py")
-        callee2 = _node(NodeLabel.FUNCTION, "load_user", file_path="src/db.py")
-        caller = _node(NodeLabel.FUNCTION, "login_handler", file_path="src/routes.py")
+        fn = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="validate_user",
+                file_path="src/auth.py",
+            ),
+        )
+        callee1 = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="check_password",
+                file_path="src/auth.py",
+            ),
+        )
+        callee2 = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="load_user",
+                file_path="src/db.py",
+            ),
+        )
+        caller = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="login_handler",
+                file_path="src/routes.py",
+            ),
+        )
         _add(graph, fn, callee1, callee2, caller)
 
         # fn -> callee1, fn -> callee2 (outgoing CALLS)
@@ -115,8 +154,20 @@ class TestFunctionText:
     def test_function_with_uses_type(self) -> None:
         """Text lists types referenced via USES_TYPE edges."""
         graph = KnowledgeGraph()
-        fn = _node(NodeLabel.FUNCTION, "validate_user", file_path="src/auth.py")
-        type_node = _node(NodeLabel.CLASS, "User", file_path="src/models.py")
+        fn = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="validate_user",
+                file_path="src/auth.py",
+            ),
+        )
+        type_node = _node(
+            GraphDeps(
+                label=NodeLabel.CLASS,
+                name="User",
+                file_path="src/models.py",
+            ),
+        )
         _add(graph, fn, type_node)
 
         graph.add_relationship(_rel(fn.id, type_node.id, RelType.USES_TYPE))
@@ -134,11 +185,13 @@ class TestMethodText:
         """Text includes the class it belongs to."""
         graph = KnowledgeGraph()
         method = _node(
-            NodeLabel.METHOD,
-            "get_name",
-            file_path="src/models.py",
-            signature="def get_name(self) -> str",
-            class_name="User",
+            GraphDeps(
+                label=NodeLabel.METHOD,
+                name="get_name",
+                file_path="src/models.py",
+                signature="def get_name(self) -> str",
+                class_name="User",
+            ),
         )
         graph.add_node(method)
 
@@ -161,7 +214,13 @@ class TestClassText:
     def test_class_basic_info(self) -> None:
         """Text includes name and file path."""
         graph = KnowledgeGraph()
-        cls = _node(NodeLabel.CLASS, "UserService", file_path="src/services.py")
+        cls = _node(
+            GraphDeps(
+                label=NodeLabel.CLASS,
+                name="UserService",
+                file_path="src/services.py",
+            ),
+        )
         graph.add_node(cls)
 
         text = generate_text(cls, graph)
@@ -172,25 +231,37 @@ class TestClassText:
     def test_class_with_methods(self) -> None:
         """Text lists methods that belong to the class (class_name match)."""
         graph = KnowledgeGraph()
-        cls = _node(NodeLabel.CLASS, "UserService", file_path="src/services.py")
+        cls = _node(
+            GraphDeps(
+                label=NodeLabel.CLASS,
+                name="UserService",
+                file_path="src/services.py",
+            ),
+        )
         m1 = _node(
-            NodeLabel.METHOD,
-            "create_user",
-            file_path="src/services.py",
-            class_name="UserService",
+            GraphDeps(
+                label=NodeLabel.METHOD,
+                name="create_user",
+                file_path="src/services.py",
+                class_name="UserService",
+            ),
         )
         m2 = _node(
-            NodeLabel.METHOD,
-            "delete_user",
-            file_path="src/services.py",
-            class_name="UserService",
+            GraphDeps(
+                label=NodeLabel.METHOD,
+                name="delete_user",
+                file_path="src/services.py",
+                class_name="UserService",
+            ),
         )
         # Unrelated method in same file, different class
         m_other = _node(
-            NodeLabel.METHOD,
-            "other_method",
-            file_path="src/services.py",
-            class_name="OtherClass",
+            GraphDeps(
+                label=NodeLabel.METHOD,
+                name="other_method",
+                file_path="src/services.py",
+                class_name="OtherClass",
+            ),
         )
         _add(graph, cls, m1, m2, m_other)
 
@@ -203,9 +274,27 @@ class TestClassText:
     def test_class_with_extends_and_implements(self) -> None:
         """Text lists base classes (EXTENDS) and interfaces (IMPLEMENTS)."""
         graph = KnowledgeGraph()
-        cls = _node(NodeLabel.CLASS, "Admin", file_path="src/models.py")
-        base = _node(NodeLabel.CLASS, "User", file_path="src/models.py")
-        iface = _node(NodeLabel.INTERFACE, "Serializable", file_path="src/types.py")
+        cls = _node(
+            GraphDeps(
+                label=NodeLabel.CLASS,
+                name="Admin",
+                file_path="src/models.py",
+            ),
+        )
+        base = _node(
+            GraphDeps(
+                label=NodeLabel.CLASS,
+                name="User",
+                file_path="src/models.py",
+            ),
+        )
+        iface = _node(
+            GraphDeps(
+                label=NodeLabel.INTERFACE,
+                name="Serializable",
+                file_path="src/types.py",
+            ),
+        )
         _add(graph, cls, base, iface)
 
         graph.add_relationship(_rel(cls.id, base.id, RelType.EXTENDS))
@@ -230,7 +319,13 @@ class TestFileText:
     def test_file_basic_info(self) -> None:
         """Text includes name and path."""
         graph = KnowledgeGraph()
-        file_node = _node(NodeLabel.FILE, "auth.py", file_path="src/auth.py")
+        file_node = _node(
+            GraphDeps(
+                label=NodeLabel.FILE,
+                name="auth.py",
+                file_path="src/auth.py",
+            ),
+        )
         graph.add_node(file_node)
 
         text = generate_text(file_node, graph)
@@ -241,10 +336,34 @@ class TestFileText:
     def test_file_with_defines_and_imports(self) -> None:
         """Text lists symbols defined and imports."""
         graph = KnowledgeGraph()
-        file_node = _node(NodeLabel.FILE, "auth.py", file_path="src/auth.py")
-        fn = _node(NodeLabel.FUNCTION, "validate", file_path="src/auth.py")
-        cls = _node(NodeLabel.CLASS, "AuthService", file_path="src/auth.py")
-        imported = _node(NodeLabel.FUNCTION, "hash_password", file_path="src/crypto.py")
+        file_node = _node(
+            GraphDeps(
+                label=NodeLabel.FILE,
+                name="auth.py",
+                file_path="src/auth.py",
+            ),
+        )
+        fn = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="validate",
+                file_path="src/auth.py",
+            ),
+        )
+        cls = _node(
+            GraphDeps(
+                label=NodeLabel.CLASS,
+                name="AuthService",
+                file_path="src/auth.py",
+            ),
+        )
+        imported = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="hash_password",
+                file_path="src/crypto.py",
+            ),
+        )
         _add(graph, file_node, fn, cls, imported)
 
         graph.add_relationship(_rel(file_node.id, fn.id, RelType.DEFINES))
@@ -271,10 +390,12 @@ class TestInterfaceText:
     def test_interface_basic(self) -> None:
         graph = KnowledgeGraph()
         iface = _node(
-            NodeLabel.INTERFACE,
-            "Serializable",
-            file_path="src/types.ts",
-            signature="interface Serializable { toJSON(): string; }",
+            GraphDeps(
+                label=NodeLabel.INTERFACE,
+                name="Serializable",
+                file_path="src/types.ts",
+                signature="interface Serializable { toJSON(): string; }",
+            ),
         )
         graph.add_node(iface)
 
@@ -291,10 +412,12 @@ class TestTypeAliasText:
     def test_type_alias_basic(self) -> None:
         graph = KnowledgeGraph()
         ta = _node(
-            NodeLabel.TYPE_ALIAS,
-            "UserID",
-            file_path="src/types.py",
-            signature="type UserID = int",
+            GraphDeps(
+                label=NodeLabel.TYPE_ALIAS,
+                name="UserID",
+                file_path="src/types.py",
+                signature="type UserID = int",
+            ),
         )
         graph.add_node(ta)
 
@@ -311,10 +434,12 @@ class TestEnumText:
     def test_enum_basic(self) -> None:
         graph = KnowledgeGraph()
         enum_node = _node(
-            NodeLabel.ENUM,
-            "Color",
-            file_path="src/enums.py",
-            signature="class Color(Enum): RED = 1; GREEN = 2; BLUE = 3",
+            GraphDeps(
+                label=NodeLabel.ENUM,
+                name="Color",
+                file_path="src/enums.py",
+                signature="class Color(Enum): RED = 1; GREEN = 2; BLUE = 3",
+            ),
         )
         graph.add_node(enum_node)
 
@@ -336,9 +461,27 @@ class TestFolderText:
     def test_folder_with_contents(self) -> None:
         """Text lists files the folder contains (outgoing CONTAINS)."""
         graph = KnowledgeGraph()
-        folder = _node(NodeLabel.FOLDER, "auth", file_path="src/auth")
-        f1 = _node(NodeLabel.FILE, "validate.py", file_path="src/auth/validate.py")
-        f2 = _node(NodeLabel.FILE, "hash.py", file_path="src/auth/hash.py")
+        folder = _node(
+            GraphDeps(
+                label=NodeLabel.FOLDER,
+                name="auth",
+                file_path="src/auth",
+            ),
+        )
+        f1 = _node(
+            GraphDeps(
+                label=NodeLabel.FILE,
+                name="validate.py",
+                file_path="src/auth/validate.py",
+            ),
+        )
+        f2 = _node(
+            GraphDeps(
+                label=NodeLabel.FILE,
+                name="hash.py",
+                file_path="src/auth/hash.py",
+            ),
+        )
         _add(graph, folder, f1, f2)
 
         graph.add_relationship(_rel(folder.id, f1.id, RelType.CONTAINS))
@@ -364,9 +507,26 @@ class TestCommunityText:
     def test_community_with_members(self) -> None:
         """Text lists member symbols (incoming MEMBER_OF)."""
         graph = KnowledgeGraph()
-        community = _node(NodeLabel.COMMUNITY, "Auth")
-        member1 = _node(NodeLabel.FUNCTION, "validate", file_path="src/auth.py")
-        member2 = _node(NodeLabel.FUNCTION, "hash_password", file_path="src/auth.py")
+        community = _node(
+            GraphDeps(
+                label=NodeLabel.COMMUNITY,
+                name="Auth",
+            ),
+        )
+        member1 = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="validate",
+                file_path="src/auth.py",
+            ),
+        )
+        member2 = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="hash_password",
+                file_path="src/auth.py",
+            ),
+        )
         _add(graph, community, member1, member2)
 
         # MEMBER_OF: member -> community (incoming to community)
@@ -392,10 +552,33 @@ class TestProcessText:
     def test_process_with_steps(self) -> None:
         """Text lists steps (incoming STEP_IN_PROCESS)."""
         graph = KnowledgeGraph()
-        process = _node(NodeLabel.PROCESS, "user_registration")
-        step1 = _node(NodeLabel.FUNCTION, "validate_input", file_path="src/reg.py")
-        step2 = _node(NodeLabel.FUNCTION, "create_user", file_path="src/reg.py")
-        step3 = _node(NodeLabel.FUNCTION, "send_email", file_path="src/email.py")
+        process = _node(
+            GraphDeps(
+                label=NodeLabel.PROCESS,
+                name="user_registration",
+            ),
+        )
+        step1 = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="validate_input",
+                file_path="src/reg.py",
+            ),
+        )
+        step2 = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="create_user",
+                file_path="src/reg.py",
+            ),
+        )
+        step3 = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="send_email",
+                file_path="src/email.py",
+            ),
+        )
         _add(graph, process, step1, step2, step3)
 
         # STEP_IN_PROCESS: step -> process (incoming to process)
@@ -424,10 +607,12 @@ class TestEdgeCases:
         """A standalone node still produces valid text."""
         graph = KnowledgeGraph()
         fn = _node(
-            NodeLabel.FUNCTION,
-            "orphan_func",
-            file_path="src/utils.py",
-            signature="def orphan_func() -> None",
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="orphan_func",
+                file_path="src/utils.py",
+                signature="def orphan_func() -> None",
+            ),
         )
         graph.add_node(fn)
 
@@ -441,7 +626,14 @@ class TestEdgeCases:
     def test_empty_signature_is_omitted(self) -> None:
         """If signature is empty, it should not produce a blank line."""
         graph = KnowledgeGraph()
-        fn = _node(NodeLabel.FUNCTION, "simple", file_path="src/app.py", signature="")
+        fn = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="simple",
+                file_path="src/app.py",
+                signature="",
+            ),
+        )
         graph.add_node(fn)
 
         text = generate_text(fn, graph)
@@ -452,14 +644,28 @@ class TestEdgeCases:
         """Method behaves like function for calls and type relationships."""
         graph = KnowledgeGraph()
         method = _node(
-            NodeLabel.METHOD,
-            "process",
-            file_path="src/service.py",
-            signature="def process(self, data: Data) -> Result",
-            class_name="Worker",
+            GraphDeps(
+                label=NodeLabel.METHOD,
+                name="process",
+                file_path="src/service.py",
+                signature="def process(self, data: Data) -> Result",
+                class_name="Worker",
+            ),
         )
-        callee = _node(NodeLabel.FUNCTION, "transform", file_path="src/utils.py")
-        type_node = _node(NodeLabel.CLASS, "Data", file_path="src/models.py")
+        callee = _node(
+            GraphDeps(
+                label=NodeLabel.FUNCTION,
+                name="transform",
+                file_path="src/utils.py",
+            ),
+        )
+        type_node = _node(
+            GraphDeps(
+                label=NodeLabel.CLASS,
+                name="Data",
+                file_path="src/models.py",
+            ),
+        )
         _add(graph, method, callee, type_node)
 
         graph.add_relationship(_rel(method.id, callee.id, RelType.CALLS))
