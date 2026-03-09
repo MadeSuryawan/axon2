@@ -6,8 +6,7 @@ These are read-only snapshots of graph state, exposed as text resources
 that MCP clients can fetch.
 """
 
-from __future__ import annotations
-
+from axon.config.constants import SYSTEM_EXCEPTIONS
 from axon.core.storage.base import StorageBackend
 
 
@@ -42,7 +41,7 @@ def get_overview(storage: StorageBackend) -> str:
             lines.append(f"  Total: {total}")
         else:
             lines.append("No nodes indexed yet.")
-    except Exception:
+    except SYSTEM_EXCEPTIONS:
         lines.append("Could not retrieve node counts.")
 
     lines.append("")
@@ -62,10 +61,11 @@ def get_overview(storage: StorageBackend) -> str:
             lines.append(f"  Total: {total}")
         else:
             lines.append("No relationships indexed yet.")
-    except Exception:
+    except SYSTEM_EXCEPTIONS:
         lines.append("Could not retrieve relationship counts.")
 
     return "\n".join(lines)
+
 
 def get_dead_code_list(storage: StorageBackend) -> str:
     """
@@ -82,7 +82,7 @@ def get_dead_code_list(storage: StorageBackend) -> str:
             "MATCH (n) WHERE n.is_dead = true "
             "RETURN n.name, n.file_path, n.start_line ORDER BY n.file_path",
         )
-    except Exception:
+    except SYSTEM_EXCEPTIONS:
         return "Could not retrieve dead code list."
 
     if not rows:
@@ -102,6 +102,7 @@ def get_dead_code_list(storage: StorageBackend) -> str:
         lines.append(f"    - {name} (line {start_line})")
 
     return "\n".join(lines)
+
 
 def get_schema() -> str:
     """

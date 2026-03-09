@@ -8,12 +8,14 @@ Each tool handler is tested for both success and edge-case paths.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from axon.core.graph.model import GraphNode, NodeLabel
 from axon.core.storage.base import SearchResult
+from axon.mcp.resources import get_dead_code_list, get_overview, get_schema
 from axon.mcp.tools import (
     _confidence_tag,
     _format_query_results,
@@ -33,7 +35,7 @@ from axon.mcp.tools import (
 
 
 @pytest.fixture
-def mock_storage():
+def mock_storage() -> MagicMock:
     """Create a mock storage backend with common default return values."""
     storage = MagicMock()
     storage.fts_search.return_value = [
@@ -68,7 +70,7 @@ def mock_storage():
 
 
 @pytest.fixture
-def mock_storage_with_relations(mock_storage):
+def mock_storage_with_relations(mock_storage: MagicMock) -> MagicMock:
     """Storage mock with callers, callees, and type refs populated."""
     _caller = GraphNode(
         id="function:src/routes/auth.py:login_handler",
@@ -109,19 +111,19 @@ def mock_storage_with_relations(mock_storage):
 
 
 class TestHandleListRepos:
-    def test_no_registry_dir(self, tmp_path):
+    def test_no_registry_dir(self, tmp_path: Path) -> None:
         """Returns 'no repos' message when registry directory does not exist."""
         result = handle_list_repos(registry_dir=tmp_path / "nonexistent")
         assert "No indexed repositories found" in result
 
-    def test_empty_registry_dir(self, tmp_path):
+    def test_empty_registry_dir(self, tmp_path: Path) -> None:
         """Returns 'no repos' message when registry directory is empty."""
         registry = tmp_path / "repos"
         registry.mkdir()
         result = handle_list_repos(registry_dir=registry)
         assert "No indexed repositories found" in result
 
-    def test_with_repos(self, tmp_path):
+    def test_with_repos(self, tmp_path: Path) -> None:
         """Returns formatted repo list when meta.json files are present."""
         registry = tmp_path / "repos"
         repo_dir = registry / "my-project"
@@ -150,7 +152,7 @@ class TestHandleListRepos:
 
 
 class TestHandleQuery:
-    def test_returns_results(self, mock_storage):
+    def test_returns_results(self, mock_storage: MagicMock) -> None:
         """Successful query returns formatted results."""
         result = handle_query(mock_storage, "validate")
         assert "validate" in result
@@ -158,19 +160,19 @@ class TestHandleQuery:
         assert "src/auth.py" in result
         assert "Next:" in result
 
-    def test_no_results(self, mock_storage):
+    def test_no_results(self, mock_storage: MagicMock) -> None:
         """Empty search returns no-results message."""
         mock_storage.fts_search.return_value = []
         mock_storage.vector_search.return_value = []
         result = handle_query(mock_storage, "nonexistent")
         assert "No results found" in result
 
-    def test_snippet_included(self, mock_storage):
+    def test_snippet_included(self, mock_storage: MagicMock) -> None:
         """Search results include snippet text."""
         result = handle_query(mock_storage, "validate")
         assert "def validate" in result
 
-    def test_custom_limit(self, mock_storage):
+    def test_custom_limit(self, mock_storage: MagicMock) -> None:
         """Limit parameter is passed through to hybrid_search."""
         handle_query(mock_storage, "validate", limit=5)
         # hybrid_search calls fts_search with candidate_limit = limit * 3
@@ -183,27 +185,27 @@ class TestHandleQuery:
 
 
 class TestHandleContext:
-    def test_basic_context(self, mock_storage):
+    def test_basic_context(self, mock_storage: MagicMock) -> None:
         """Returns symbol name, file, and line range."""
         result = handle_context(mock_storage, "validate")
         assert "Symbol: validate (Function)" in result
         assert "src/auth.py:10-30" in result
         assert "Next:" in result
 
-    def test_not_found_fts_empty(self, mock_storage):
+    def test_not_found_fts_empty(self, mock_storage: MagicMock) -> None:
         """Returns not-found message when FTS returns nothing."""
         mock_storage.exact_name_search.return_value = []
         mock_storage.fts_search.return_value = []
         result = handle_context(mock_storage, "nonexistent")
         assert "not found" in result.lower()
 
-    def test_not_found_node_none(self, mock_storage):
+    def test_not_found_node_none(self, mock_storage: MagicMock) -> None:
         """Returns not-found message when get_node returns None."""
         mock_storage.get_node.return_value = None
         result = handle_context(mock_storage, "validate")
         assert "not found" in result.lower()
 
-    def test_with_callers_callees_type_refs(self, mock_storage_with_relations):
+    def test_with_callers_callees_type_refs(self, mock_storage_with_relations: MagicMock) -> None:
         """Full context includes callers, callees, and type refs."""
         result = handle_context(mock_storage_with_relations, "validate")
         assert "Callers (1):" in result
@@ -213,7 +215,7 @@ class TestHandleContext:
         assert "Type references (1):" in result
         assert "User" in result
 
-    def test_dead_code_flag(self, mock_storage):
+    def test_dead_code_flag(self, mock_storage: MagicMock) -> None:
         """Dead code status is shown when is_dead is True."""
         mock_storage.get_node.return_value = GraphNode(
             id="function:src/old.py:deprecated",
@@ -234,12 +236,12 @@ class TestHandleContext:
 
 
 class TestHandleImpact:
-    def test_no_downstream(self, mock_storage):
+    def test_no_downstream(self, mock_storage: MagicMock) -> None:
         """Returns no-dependencies message when traverse is empty."""
         result = handle_impact(mock_storage, "validate")
         assert "No upstream callers found" in result or "No downstream dependencies" in result
 
-    def test_with_affected_symbols(self, mock_storage):
+    def test_with_affected_symbols(self, mock_storage: MagicMock) -> None:
         """Returns formatted impact list when traverse finds nodes."""
         _login = GraphNode(
             id="function:src/api.py:login",
@@ -267,7 +269,7 @@ class TestHandleImpact:
         assert "register" in result
         assert "Depth: 2" in result
 
-    def test_symbol_not_found(self, mock_storage):
+    def test_symbol_not_found(self, mock_storage: MagicMock) -> None:
         """Returns not-found when symbol does not exist."""
         mock_storage.exact_name_search.return_value = []
         mock_storage.fts_search.return_value = []
@@ -281,12 +283,12 @@ class TestHandleImpact:
 
 
 class TestHandleDeadCode:
-    def test_no_dead_code(self, mock_storage):
+    def test_no_dead_code(self, mock_storage: MagicMock) -> None:
         """Returns clean message when no dead code found."""
         result = handle_dead_code(mock_storage)
         assert "No dead code detected" in result
 
-    def test_with_dead_code(self, mock_storage):
+    def test_with_dead_code(self, mock_storage: MagicMock) -> None:
         """Returns formatted dead code list (delegates to get_dead_code_list)."""
         mock_storage.execute_raw.return_value = [
             ["unused_func", "src/old.py", 10],
@@ -297,7 +299,7 @@ class TestHandleDeadCode:
         assert "unused_func" in result
         assert "DeprecatedModel" in result
 
-    def test_execute_raw_exception(self, mock_storage):
+    def test_execute_raw_exception(self, mock_storage: MagicMock) -> None:
         """Gracefully handles storage errors."""
         mock_storage.execute_raw.side_effect = RuntimeError("DB error")
         result = handle_dead_code(mock_storage)
@@ -324,7 +326,7 @@ index abc1234..def5678 100644
 
 
 class TestHandleDetectChanges:
-    def test_parses_diff(self, mock_storage):
+    def test_parses_diff(self, mock_storage: MagicMock) -> None:
         """Successfully parses diff and identifies changed files."""
         # handle_detect_changes now uses execute_raw() with a Cypher query
         # to find symbols in the changed file.
@@ -337,17 +339,17 @@ class TestHandleDetectChanges:
         assert "validate" in result
         assert "Total affected symbols:" in result
 
-    def test_empty_diff(self, mock_storage):
+    def test_empty_diff(self, mock_storage: MagicMock) -> None:
         """Returns message for empty diff input."""
         result = handle_detect_changes(mock_storage, "")
         assert "Empty diff provided" in result
 
-    def test_unparseable_diff(self, mock_storage):
+    def test_unparseable_diff(self, mock_storage: MagicMock) -> None:
         """Returns message when diff contains no recognisable hunks."""
         result = handle_detect_changes(mock_storage, "just some random text")
         assert "Could not parse" in result
 
-    def test_no_symbols_in_changed_lines(self, mock_storage):
+    def test_no_symbols_in_changed_lines(self, mock_storage: MagicMock) -> None:
         """Reports file but no symbols when nothing overlaps."""
         mock_storage.execute_raw.return_value = []
         result = handle_detect_changes(mock_storage, SAMPLE_DIFF)
@@ -361,7 +363,7 @@ class TestHandleDetectChanges:
 
 
 class TestHandleCypher:
-    def test_returns_results(self, mock_storage):
+    def test_returns_results(self, mock_storage: MagicMock) -> None:
         """Formats raw query results."""
         mock_storage.execute_raw.return_value = [
             ["validate", "src/auth.py", 10],
@@ -372,12 +374,12 @@ class TestHandleCypher:
         assert "validate" in result
         assert "src/api.py" in result
 
-    def test_no_results(self, mock_storage):
+    def test_no_results(self, mock_storage: MagicMock) -> None:
         """Returns no-results message for empty query output."""
         result = handle_cypher(mock_storage, "MATCH (n:Nonexistent) RETURN n")
         assert "no results" in result.lower()
 
-    def test_query_error(self, mock_storage):
+    def test_query_error(self, mock_storage: MagicMock) -> None:
         """Returns error message when query execution fails."""
         mock_storage.execute_raw.side_effect = RuntimeError("Syntax error")
         result = handle_cypher(mock_storage, "INVALID QUERY")
@@ -391,28 +393,22 @@ class TestHandleCypher:
 
 
 class TestResources:
-    def test_get_schema(self):
+    def test_get_schema(self) -> None:
         """Schema resource returns static schema text."""
-        from axon.mcp.resources import get_schema
-
         result = get_schema()
         assert "Node Labels:" in result
         assert "Relationship Types:" in result
         assert "CALLS" in result
         assert "Function" in result
 
-    def test_get_overview(self, mock_storage):
+    def test_get_overview(self, mock_storage: MagicMock) -> None:
         """Overview resource queries storage for stats."""
-        from axon.mcp.resources import get_overview
-
         mock_storage.execute_raw.return_value = [["Function", 42]]
         result = get_overview(mock_storage)
         assert "Axon Codebase Overview" in result
 
-    def test_get_dead_code_list(self, mock_storage):
+    def test_get_dead_code_list(self, mock_storage: MagicMock) -> None:
         """Dead code resource returns formatted report."""
-        from axon.mcp.resources import get_dead_code_list
-
         mock_storage.execute_raw.return_value = [
             ["old_func", "src/old.py", 10],
         ]
@@ -420,10 +416,8 @@ class TestResources:
         assert "Dead Code Report" in result
         assert "old_func" in result
 
-    def test_get_dead_code_list_empty(self, mock_storage):
+    def test_get_dead_code_list_empty(self, mock_storage: MagicMock) -> None:
         """Dead code resource returns clean message when empty."""
-        from axon.mcp.resources import get_dead_code_list
-
         result = get_dead_code_list(mock_storage)
         assert "No dead code detected" in result
 
@@ -436,17 +430,17 @@ class TestResources:
 class TestConfidenceTag:
     """_confidence_tag() returns the correct visual indicator."""
 
-    def test_high_confidence(self):
+    def test_high_confidence(self) -> None:
         assert _confidence_tag(1.0) == ""
         assert _confidence_tag(0.95) == ""
         assert _confidence_tag(0.9) == ""
 
-    def test_medium_confidence(self):
+    def test_medium_confidence(self) -> None:
         assert _confidence_tag(0.89) == " (~)"
         assert _confidence_tag(0.5) == " (~)"
         assert _confidence_tag(0.7) == " (~)"
 
-    def test_low_confidence(self):
+    def test_low_confidence(self) -> None:
         assert _confidence_tag(0.49) == " (?)"
         assert _confidence_tag(0.1) == " (?)"
         assert _confidence_tag(0.0) == " (?)"
@@ -455,20 +449,20 @@ class TestConfidenceTag:
 class TestConfidenceInContext:
     """handle_context() displays confidence tags in output."""
 
-    def test_medium_confidence_tag_shown(self, mock_storage_with_relations):
+    def test_medium_confidence_tag_shown(self, mock_storage_with_relations: MagicMock) -> None:
         """Callees with confidence 0.8 show the (~) tag."""
         result = handle_context(mock_storage_with_relations, "validate")
         # _callee has confidence 0.8, which produces " (~)"
         assert "(~)" in result
 
-    def test_high_confidence_no_tag(self, mock_storage_with_relations):
+    def test_high_confidence_no_tag(self, mock_storage_with_relations: MagicMock) -> None:
         """Callers with confidence 1.0 show no extra tag."""
         result = handle_context(mock_storage_with_relations, "validate")
         # login_handler has confidence 1.0 — no tag after its line
         assert "login_handler" in result
         # There should be no "(?)" for the high-confidence caller
         lines = result.split("\n")
-        caller_line = [l for l in lines if "login_handler" in l][0]
+        caller_line = [line for line in lines if "login_handler" in line][0]
         assert "(?)" not in caller_line
         assert "(~)" not in caller_line
 
@@ -481,12 +475,12 @@ class TestConfidenceInContext:
 class TestGroupByProcess:
     """_group_by_process() groups search results by process membership."""
 
-    def test_empty_results(self, mock_storage):
+    def test_empty_results(self, mock_storage: MagicMock) -> None:
         """Returns empty dict for empty results list."""
         groups = _group_by_process([], mock_storage)
         assert groups == {}
 
-    def test_with_memberships(self, mock_storage):
+    def test_with_memberships(self, mock_storage: MagicMock) -> None:
         """Returns correct grouping when process memberships exist."""
         results = [
             SearchResult(node_id="func:a", score=1.0, node_name="a"),
@@ -501,7 +495,7 @@ class TestGroupByProcess:
         assert "Auth Flow" in groups
         assert len(groups["Auth Flow"]) == 2
 
-    def test_backend_missing_method(self, mock_storage):
+    def test_backend_missing_method(self, mock_storage: MagicMock) -> None:
         """Returns empty dict if backend raises AttributeError."""
         mock_storage.get_process_memberships.side_effect = AttributeError
         results = [SearchResult(node_id="func:a", score=1.0)]
@@ -512,12 +506,15 @@ class TestGroupByProcess:
 class TestFormatQueryResults:
     """_format_query_results() renders grouped and ungrouped results."""
 
-    def test_ungrouped_only(self):
+    def test_ungrouped_only(self) -> None:
         """With no groups, results appear inline."""
         results = [
             SearchResult(
-                node_id="func:a", score=1.0, node_name="foo",
-                file_path="src/a.py", label="function",
+                node_id="func:a",
+                score=1.0,
+                node_name="foo",
+                file_path="src/a.py",
+                label="function",
             ),
         ]
         output = _format_query_results(results, {})
@@ -525,15 +522,21 @@ class TestFormatQueryResults:
         assert "src/a.py" in output
         assert "Next:" in output
 
-    def test_with_groups(self):
+    def test_with_groups(self) -> None:
         """Grouped results appear under process section headers."""
         r1 = SearchResult(
-            node_id="func:a", score=1.0, node_name="login",
-            file_path="src/auth.py", label="function",
+            node_id="func:a",
+            score=1.0,
+            node_name="login",
+            file_path="src/auth.py",
+            label="function",
         )
         r2 = SearchResult(
-            node_id="func:b", score=0.9, node_name="helper",
-            file_path="src/utils.py", label="function",
+            node_id="func:b",
+            score=0.9,
+            node_name="helper",
+            file_path="src/utils.py",
+            label="function",
         )
         groups = {"Auth Flow": [r1]}
         output = _format_query_results([r1, r2], groups)
@@ -542,19 +545,23 @@ class TestFormatQueryResults:
         assert "login" in output
         assert "helper" in output
 
-    def test_snippet_truncation(self):
+    def test_snippet_truncation(self) -> None:
         """Snippets longer than 200 chars are truncated."""
         long_snippet = "x" * 300
         results = [
             SearchResult(
-                node_id="func:a", score=1.0, node_name="foo",
-                file_path="src/a.py", label="function", snippet=long_snippet,
+                node_id="func:a",
+                score=1.0,
+                node_name="foo",
+                file_path="src/a.py",
+                label="function",
+                snippet=long_snippet,
             ),
         ]
         output = _format_query_results(results, {})
         # Snippet in output should be at most 200 chars
         lines = output.split("\n")
-        snippet_lines = [l for l in lines if l.strip().startswith("xxx")]
+        snippet_lines = [line for line in lines if line.strip().startswith("xxx")]
         for line in snippet_lines:
             assert len(line.strip()) <= 200
 
@@ -567,7 +574,7 @@ class TestFormatQueryResults:
 class TestImpactDepthGrouping:
     """handle_impact() groups results by depth with labels."""
 
-    def test_depth_section_headers(self, mock_storage):
+    def test_depth_section_headers(self, mock_storage: MagicMock) -> None:
         """Output contains depth section headers with labels."""
         _login = GraphNode(
             id="function:src/api.py:login",
@@ -586,7 +593,8 @@ class TestImpactDepthGrouping:
             end_line=50,
         )
         mock_storage.traverse_with_depth.return_value = [
-            (_login, 1), (_register, 2),
+            (_login, 1),
+            (_register, 2),
         ]
         mock_storage.get_callers_with_confidence.return_value = [(_login, 0.8)]
 
@@ -596,7 +604,7 @@ class TestImpactDepthGrouping:
         assert "Depth 2" in result
         assert "Indirect (may break)" in result
 
-    def test_depth_3_transitive_label(self, mock_storage):
+    def test_depth_3_transitive_label(self, mock_storage: MagicMock) -> None:
         """Depth >= 3 shows 'Transitive (review)' label."""
         _node = GraphNode(
             id="function:src/far.py:distant",
@@ -612,7 +620,7 @@ class TestImpactDepthGrouping:
         result = handle_impact(mock_storage, "validate", depth=3)
         assert "Transitive (review)" in result
 
-    def test_confidence_shown_for_direct_callers(self, mock_storage):
+    def test_confidence_shown_for_direct_callers(self, mock_storage: MagicMock) -> None:
         """Direct callers show inline confidence score."""
         _login = GraphNode(
             id="function:src/api.py:login",
@@ -628,7 +636,7 @@ class TestImpactDepthGrouping:
         result = handle_impact(mock_storage, "validate", depth=1)
         assert "confidence: 0.75" in result
 
-    def test_depth_clamped_to_max(self, mock_storage):
+    def test_depth_clamped_to_max(self, mock_storage: MagicMock) -> None:
         """Depth > MAX_TRAVERSE_DEPTH is clamped (no crash)."""
         mock_storage.traverse_with_depth.return_value = []
         result = handle_impact(mock_storage, "validate", depth=100)

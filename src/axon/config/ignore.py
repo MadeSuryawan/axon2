@@ -8,6 +8,8 @@ from typing import cast
 from pathspec import PathSpec
 from pathspec._typing import AnyStr
 
+from axon.config.constants import SYSTEM_EXCEPTIONS
+
 DEFAULT_IGNORE_PATTERNS: frozenset[str] = frozenset(
     {
         # Directories
@@ -87,7 +89,7 @@ def _matches_gitignore(path: Path, gitignore_patterns: list[str]) -> bool:
             spec = PathSpec.from_lines("gitignore", cast(Iterable[AnyStr], gitignore_patterns))
             _pathspec_cache[cache_key] = spec
         return spec.match_file(str(path))
-    except (RuntimeError, SystemError, OSError):
+    except SYSTEM_EXCEPTIONS:
         path_str = str(path)
         for pattern in gitignore_patterns:
             if fnmatch(path_str, pattern):
