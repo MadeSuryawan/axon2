@@ -1,7 +1,5 @@
 """Axon CLI — Graph-powered code intelligence engine."""
 
-from __future__ import annotations
-
 from asyncio import Event, Lock, gather
 from asyncio import run as asyncio_run
 from contextlib import suppress
@@ -523,6 +521,10 @@ def serve(
     rprint("[b green]Index complete.")
 
     try:
+        rprint(
+            f"[b blue]Serving and watching [b magenta]{repo_path}[/b magenta] "
+            "for changes. [white](Ctrl+D to stop)",
+        )
         asyncio_run(_run(repo_path, storage))
     except KeyboardInterrupt:
         pass
