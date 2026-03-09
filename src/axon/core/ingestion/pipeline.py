@@ -185,7 +185,7 @@ class Pipelines:
             self._storage.bulk_load(self._graph)
             if self._embeddings:
                 try:
-                    rprint("[b blue]Generating embeddings...")
+                    rprint("\n[b blue]Generating embeddings...")
                     node_embeddings = embed_graph(self._graph)
                     self._storage.store_embeddings(node_embeddings)
                     self._result.embeddings = len(node_embeddings)
