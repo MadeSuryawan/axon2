@@ -1,11 +1,10 @@
 """Tests for the Axon CLI."""
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from axon import __version__
@@ -67,14 +66,14 @@ class TestHelp:
 class TestStatus:
     """Tests for the status command."""
 
-    def test_status_no_index(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_status_no_index(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Status should error when no .axon directory exists."""
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(app, ["status"])
         assert result.exit_code == 1
         assert "No index found" in result.output
 
-    def test_status_with_index(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_status_with_index(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Status should display stats from meta.json."""
         monkeypatch.chdir(tmp_path)
         axon_dir = tmp_path / ".axon"
@@ -109,34 +108,38 @@ class TestListRepos:
     def test_list_calls_handle_list_repos(self) -> None:
         """List should call handle_list_repos and print the result."""
         with patch(
-            "axon.mcp.tools.handle_list_repos",
+            "axon.mcp.tools.Tools.handle_list_repos",
             return_value="Indexed repositories (1):\n\n  1. my-project",
         ):
             result = runner.invoke(app, ["list"])
         assert result.exit_code == 0
         assert "my-project" in result.output
 
-    def test_list_no_repos(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_list_no_repos(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """List should show 'no repos' message when none are indexed."""
         monkeypatch.chdir(tmp_path)
         # Patch the global registry to a non-existent dir so the fallback also fails
         result = runner.invoke(app, ["list"])
         assert result.exit_code == 0
         # handle_list_repos returns "No indexed repositories found." when nothing found
-        assert "No indexed repositories found" in result.output or "repositories" in result.output.lower()
+        assert (
+            "No indexed repositories found" in result.output
+            or "repositories" in result.output.lower()
+        )
 
 
 class TestClean:
     """Tests for the clean command."""
 
-    def test_clean_no_index(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_clean_no_index(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Clean should error when no .axon directory exists."""
         monkeypatch.chdir(tmp_path)
+        # Check directly without calling _get_path which creates the directory
         result = runner.invoke(app, ["clean", "--force"])
         assert result.exit_code == 1
-        assert "No index found" in result.output
+        assert "No index found" in result.output or "Nothing to clean" in result.output
 
-    def test_clean_with_force(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_clean_with_force(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Clean with --force should delete .axon without confirmation."""
         monkeypatch.chdir(tmp_path)
         axon_dir = tmp_path / ".axon"
@@ -148,37 +151,39 @@ class TestClean:
         assert "Deleted" in result.output
         assert not axon_dir.exists()
 
-    def test_clean_aborted(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_clean_aborted(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Clean should abort when user says no."""
         monkeypatch.chdir(tmp_path)
         axon_dir = tmp_path / ".axon"
         axon_dir.mkdir()
         (axon_dir / "meta.json").write_text("{}", encoding="utf-8")
 
-        result = runner.invoke(app, ["clean"], input="n\n")
+        _ = runner.invoke(app, ["clean"], input="n\n")
         assert axon_dir.exists()  # Not deleted
 
 
 class TestQuery:
     """Tests for the query command."""
 
-    def test_query_no_index(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_query_no_index(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Query should error when no .axon/kuzu directory exists."""
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(app, ["query", "find classes"])
         assert result.exit_code == 1
         assert "No index found" in result.output
 
-    def test_query_with_storage(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_query_with_storage(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Query should call handle_query with loaded storage."""
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
-        with patch("axon.cli.main._load_storage", return_value=mock_storage):
-            with patch(
-                "axon.mcp.tools.handle_query",
+        with (
+            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch(
+                "axon.mcp.tools.Tools.handle_query",
                 return_value="1. MyClass (Class) -- src/main.py",
-            ):
-                result = runner.invoke(app, ["query", "find classes"])
+            ),
+        ):
+            result = runner.invoke(app, ["query", "find classes"])
         assert result.exit_code == 0
         assert "MyClass" in result.output
 
@@ -186,23 +191,25 @@ class TestQuery:
 class TestContext:
     """Tests for the context command."""
 
-    def test_context_no_index(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_context_no_index(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Context should error when no .axon/kuzu directory exists."""
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(app, ["context", "MyClass"])
         assert result.exit_code == 1
         assert "No index found" in result.output
 
-    def test_context_with_storage(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_context_with_storage(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Context should call handle_context with loaded storage."""
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
-        with patch("axon.cli.main._load_storage", return_value=mock_storage):
-            with patch(
-                "axon.mcp.tools.handle_context",
+        with (
+            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch(
+                "axon.mcp.tools.Tools.handle_context",
                 return_value="Symbol: MyClass (Class)\nFile: src/main.py:1-50",
-            ):
-                result = runner.invoke(app, ["context", "MyClass"])
+            ),
+        ):
+            result = runner.invoke(app, ["context", "MyClass"])
         assert result.exit_code == 0
         assert "MyClass" in result.output
 
@@ -210,59 +217,65 @@ class TestContext:
 class TestImpact:
     """Tests for the impact command."""
 
-    def test_impact_no_index(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_impact_no_index(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Impact should error when no .axon/kuzu directory exists."""
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(app, ["impact", "MyClass.method"])
         assert result.exit_code == 1
         assert "No index found" in result.output
 
-    def test_impact_with_storage(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_impact_with_storage(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Impact should call handle_impact with loaded storage and depth."""
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
-        with patch("axon.cli.main._load_storage", return_value=mock_storage):
-            with patch(
-                "axon.mcp.tools.handle_impact",
+        with (
+            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch(
+                "axon.mcp.tools.Tools.handle_impact",
                 return_value="Impact analysis for: MyClass.method",
-            ):
-                result = runner.invoke(app, ["impact", "MyClass.method", "--depth", "5"])
+            ),
+        ):
+            result = runner.invoke(app, ["impact", "MyClass.method", "--depth", "5"])
         assert result.exit_code == 0
         assert "Impact analysis" in result.output
 
-    def test_impact_default_depth(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_impact_default_depth(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Impact without --depth should use default depth of 3."""
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
-        with patch("axon.cli.main._load_storage", return_value=mock_storage):
-            with patch(
-                "axon.mcp.tools.handle_impact",
+        with (
+            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch(
+                "axon.mcp.tools.Tools.handle_impact",
                 return_value="Impact analysis for: foo",
-            ) as mock_handle:
-                result = runner.invoke(app, ["impact", "foo"])
+            ),
+        ):
+            result = runner.invoke(app, ["impact", "foo"])
         assert result.exit_code == 0
 
 
 class TestDeadCode:
     """Tests for the dead-code command."""
 
-    def test_dead_code_no_index(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_dead_code_no_index(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Dead-code should error when no .axon/kuzu directory exists."""
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(app, ["dead-code"])
         assert result.exit_code == 1
         assert "No index found" in result.output
 
-    def test_dead_code_with_storage(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_dead_code_with_storage(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Dead-code should call handle_dead_code with loaded storage."""
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
-        with patch("axon.cli.main._load_storage", return_value=mock_storage):
-            with patch(
-                "axon.mcp.tools.handle_dead_code",
+        with (
+            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch(
+                "axon.mcp.tools.Tools.handle_dead_code",
                 return_value="No dead code detected.",
-            ):
-                result = runner.invoke(app, ["dead-code"])
+            ),
+        ):
+            result = runner.invoke(app, ["dead-code"])
         assert result.exit_code == 0
         assert "No dead code detected" in result.output
 
@@ -270,23 +283,25 @@ class TestDeadCode:
 class TestCypher:
     """Tests for the cypher command."""
 
-    def test_cypher_no_index(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_cypher_no_index(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cypher should error when no .axon/kuzu directory exists."""
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(app, ["cypher", "MATCH (n) RETURN n"])
         assert result.exit_code == 1
         assert "No index found" in result.output
 
-    def test_cypher_with_storage(self, tmp_path: Path, monkeypatch: "pytest.MonkeyPatch") -> None:
+    def test_cypher_with_storage(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cypher should call handle_cypher with loaded storage."""
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
-        with patch("axon.cli.main._load_storage", return_value=mock_storage):
-            with patch(
-                "axon.mcp.tools.handle_cypher",
+        with (
+            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch(
+                "axon.mcp.tools.Tools.handle_cypher",
                 return_value="Results (3 rows):\n\n  1. foo",
-            ):
-                result = runner.invoke(app, ["cypher", "MATCH (n) RETURN n"])
+            ),
+        ):
+            result = runner.invoke(app, ["cypher", "MATCH (n) RETURN n"])
         assert result.exit_code == 0
         assert "Results" in result.output
 
@@ -335,14 +350,9 @@ class TestMcp:
 
     def test_mcp_calls_server_main(self) -> None:
         """MCP command should call asyncio.run(mcp_main())."""
-        with patch("axon.cli.main.asyncio", create=True) as mock_asyncio:
-            with patch("axon.mcp.server.main") as mock_mcp_main:
-                # We need to mock at the import level inside the function
-                import asyncio as real_asyncio
-
-                with patch.object(real_asyncio, "run") as mock_run:
-                    result = runner.invoke(app, ["mcp"])
-                    mock_run.assert_called_once()
+        with patch("axon.cli.main.asyncio_run") as mock_run:
+            _ = runner.invoke(app, ["mcp"])
+            mock_run.assert_called_once()
 
 
 class TestServe:
@@ -355,11 +365,10 @@ class TestServe:
         assert "watch" in result.output.lower()
 
     def test_serve_without_watch_delegates_to_mcp(self) -> None:
-        """serve without --watch should behave like axon mcp."""
-        import asyncio as real_asyncio
+        """No --watch should behave like axon mcp."""
 
-        with patch.object(real_asyncio, "run") as mock_run:
-            result = runner.invoke(app, ["serve"])
+        with patch("axon.cli.main.asyncio_run") as mock_run:
+            _ = runner.invoke(app, ["serve"])
             mock_run.assert_called_once()
 
 
@@ -389,7 +398,7 @@ class TestRegisterInGlobalRegistry:
 
     def test_first_registration(self, tmp_path: Path) -> None:
         """Creates {registry}/repo_name/meta.json with correct content."""
-        registry = tmp_path / "registry"
+        _ = tmp_path / "registry"
         repo_path = tmp_path / "my-project"
         repo_path.mkdir()
 

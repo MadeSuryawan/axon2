@@ -26,16 +26,7 @@ from pydantic import AnyUrl
 
 from axon.core.storage.kuzu_backend import KuzuBackend
 from axon.mcp.resources import get_dead_code_list, get_overview, get_schema
-from axon.mcp.tools import (
-    MAX_TRAVERSE_DEPTH,
-    handle_context,
-    handle_cypher,
-    handle_dead_code,
-    handle_detect_changes,
-    handle_impact,
-    handle_list_repos,
-    handle_query,
-)
+from axon.mcp.tools import MAX_TRAVERSE_DEPTH, Tools
 
 logger = getLogger(__name__)
 
@@ -43,6 +34,9 @@ server = Server("axon")
 
 _storage: KuzuBackend | None = None
 _lock: Lock | None = None
+
+
+_tools = Tools()
 
 
 def set_storage(storage: KuzuBackend) -> None:
@@ -199,23 +193,22 @@ async def list_tools() -> list[Tool]:
 
 def _dispatch_tool(name: str, arguments: dict, storage: KuzuBackend) -> dict[str, str]:
     """Sync tool dispatch — called directly or via ``to_thread``."""
-
     return {
-        "axon_list_repos": handle_list_repos(),
-        "axon_query": handle_query(
+        "axon_list_repos": _tools.handle_list_repos(),
+        "axon_query": _tools.handle_query(
             storage,
             arguments.get("query", ""),
             limit=arguments.get("limit", 20),
         ),
-        "axon_context": handle_context(storage, arguments.get("symbol", "")),
-        "axon_impact": handle_impact(
+        "axon_context": _tools.handle_context(storage, arguments.get("symbol", "")),
+        "axon_impact": _tools.handle_impact(
             storage,
             arguments.get("symbol", ""),
             depth=arguments.get("depth", 3),
         ),
-        "axon_dead_code": handle_dead_code(storage),
-        "axon_detect_changes": handle_detect_changes(storage, arguments.get("diff", "")),
-        "axon_cypher": handle_cypher(storage, arguments.get("query", "")),
+        "axon_dead_code": _tools.handle_dead_code(storage),
+        "axon_detect_changes": _tools.handle_detect_changes(storage, arguments.get("diff", "")),
+        "axon_cypher": _tools.handle_cypher(storage, arguments.get("query", "")),
         "unknown": f"Unknown tool: {name}",
     }
 

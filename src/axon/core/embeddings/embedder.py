@@ -14,6 +14,7 @@ from functools import lru_cache
 
 from fastembed import TextEmbedding
 
+from axon.config.constants import MODEL_NAME
 from axon.core.embeddings.text import build_class_method_index, generate_text
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import NodeLabel
@@ -21,9 +22,9 @@ from axon.core.storage.base import NodeEmbedding
 
 
 @lru_cache(maxsize=4)
-def _get_model(model_name: str) -> TextEmbedding:
+def get_model() -> TextEmbedding:
 
-    return TextEmbedding(model_name=model_name)
+    return TextEmbedding(model_name=MODEL_NAME)
 
 
 # Labels worth embedding — skip Folder, Community, Process (structural only).
@@ -42,7 +43,6 @@ EMBEDDABLE_LABELS: frozenset[NodeLabel] = frozenset(
 
 def embed_graph(
     graph: KnowledgeGraph,
-    model_name: str = "BAAI/bge-small-en-v1.5",
     batch_size: int = 64,
 ) -> list[NodeEmbedding]:
     """
@@ -54,8 +54,6 @@ def embed_graph(
 
     Args:
         graph: The knowledge graph whose nodes should be embedded.
-        model_name: The fastembed model identifier.  Defaults to
-            ``"BAAI/bge-small-en-v1.5"``.
         batch_size: Number of texts to encode per batch.  Defaults to 64.
 
     Returns:
@@ -71,8 +69,7 @@ def embed_graph(
     class_method_idx = build_class_method_index(graph)
     texts = [generate_text(node, graph, class_method_idx) for node in nodes]
 
-    model = _get_model(model_name)
-    vectors = list(model.embed(texts, batch_size=batch_size))
+    vectors = list(get_model().embed(texts, batch_size=batch_size))
 
     results: list[NodeEmbedding] = []
     for node, vector in zip(nodes, vectors, strict=True):
@@ -89,7 +86,6 @@ def embed_graph(
 def embed_nodes(
     graph: KnowledgeGraph,
     node_ids: set[str],
-    model_name: str = "BAAI/bge-small-en-v1.5",
     batch_size: int = 64,
 ) -> list[NodeEmbedding]:
     """Like :func:`embed_graph`, but only for the given *node_ids*."""
@@ -103,7 +99,7 @@ def embed_nodes(
         return []
 
     class_method_idx = build_class_method_index(graph)
-    model = _get_model(model_name)
+    model = get_model()
 
     texts = [generate_text(n, graph, class_method_idx) for n in nodes]
     embeddings: list[NodeEmbedding] = []

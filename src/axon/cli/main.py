@@ -28,14 +28,7 @@ from axon.core.storage.kuzu_backend import KuzuBackend
 from axon.mcp.server import main as mcp_main
 from axon.mcp.server import server as mcp_server
 from axon.mcp.server import set_lock, set_storage
-from axon.mcp.tools import (
-    handle_context,
-    handle_cypher,
-    handle_dead_code,
-    handle_impact,
-    handle_list_repos,
-    handle_query,
-)
+from axon.mcp.tools import Tools
 
 if platform in ("win32", "cygwin", "cli"):
     with suppress(ImportError):
@@ -75,6 +68,7 @@ _PATH_ARG = Argument(Path("."), help="Path to the repository to index.")
 # Boolean defaults to avoid FBT003 errors
 _FALSE = False
 _TRUE = True
+_tools = Tools()
 
 
 def _get_kuzu(db_path: Path, *, read_only: bool = False) -> KuzuBackend:
@@ -289,7 +283,7 @@ def status() -> None:
 def list_repos() -> None:
     """List all indexed repositories."""
 
-    result = handle_list_repos()
+    result = _tools.handle_list_repos()
     rprint(result)
 
 
@@ -304,7 +298,8 @@ def clean(
     ),
 ) -> None:
     """Delete index for current repository."""
-    repo_path, axon_dir, _ = _get_path()
+    repo_path = Path.cwd().resolve()
+    axon_dir = repo_path / ".axon"
 
     if not axon_dir.exists():
         rprint(f"[red]Error:[/red] No index found at {repo_path}. Nothing to clean.")
@@ -326,7 +321,7 @@ def query(
     """Search the knowledge graph."""
 
     storage = _load_storage()
-    result = handle_query(storage, q, limit=limit)
+    result = _tools.handle_query(storage, q, limit=limit)
     rprint(result)
     storage.close()
 
@@ -338,7 +333,7 @@ def context(
     """Show 360-degree view of a symbol."""
 
     storage = _load_storage()
-    result = handle_context(storage, name)
+    result = _tools.handle_context(storage, name)
     rprint(result)
     storage.close()
 
@@ -351,7 +346,7 @@ def impact(
     """Show blast radius of changing a symbol."""
 
     storage = _load_storage()
-    result = handle_impact(storage, target, depth=depth)
+    result = _tools.handle_impact(storage, target, depth=depth)
     rprint(result)
     storage.close()
 
@@ -361,7 +356,7 @@ def dead_code() -> None:
     """List all detected dead code."""
 
     storage = _load_storage()
-    result = handle_dead_code(storage)
+    result = _tools.handle_dead_code(storage)
     rprint(result)
     storage.close()
 
@@ -373,7 +368,7 @@ def cypher(
     """Execute raw Cypher against the knowledge graph."""
 
     storage = _load_storage()
-    result = handle_cypher(storage, query)
+    result = _tools.handle_cypher(storage, query)
     rprint(result)
     storage.close()
 
