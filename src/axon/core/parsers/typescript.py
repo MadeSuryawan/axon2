@@ -159,7 +159,7 @@ class TsTypeExtractor:
             ),
         )
 
-    def _extract_param_types(self, params_node: Node, result: ParseResult) -> None:  # noqa: C901
+    def _extract_param_types(self, params_node: Node, result: ParseResult) -> None:
         """
         Extract type annotations from function parameters.
 
@@ -239,7 +239,7 @@ class TsImportExtractor:
         """
         self._type_extractor = type_extractor
 
-    def extract_import(self, node: Node, result: ParseResult) -> None:  # noqa: C901, PLR0912
+    def extract_import(self, node: Node, result: ParseResult) -> None:
         """
         Handle ES module import statements.
 

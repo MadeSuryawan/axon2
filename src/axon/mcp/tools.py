@@ -10,8 +10,6 @@ The main entry point is the :class:`Tools` class, which encapsulates all tool
 handlers and helper methods.
 """
 
-from __future__ import annotations
-
 from json import JSONDecodeError, loads
 from logging import getLogger
 from pathlib import Path

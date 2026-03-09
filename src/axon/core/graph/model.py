@@ -6,8 +6,6 @@ entities (files, functions, classes, etc.) and the edges between them
 (calls, imports, contains, etc.).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -27,6 +25,7 @@ class NodeLabel(Enum):
     COMMUNITY = "community"
     PROCESS = "process"
 
+
 class RelType(Enum):
     """Relationship types connecting graph nodes."""
 
@@ -41,6 +40,7 @@ class RelType(Enum):
     USES_TYPE = "uses_type"
     EXPORTS = "exports"
     COUPLED_WITH = "coupled_with"
+
 
 def generate_id(label: NodeLabel, file_path: str, symbol_name: str = "") -> str:
     """
@@ -57,6 +57,7 @@ def generate_id(label: NodeLabel, file_path: str, symbol_name: str = "") -> str:
         A colon-separated string suitable for use as a graph node ID.
     """
     return f"{label.value}:{file_path}:{symbol_name}"
+
 
 @dataclass
 class GraphNode:
@@ -84,6 +85,7 @@ class GraphNode:
     is_exported: bool = False
 
     properties: dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class GraphRelationship:

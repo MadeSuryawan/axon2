@@ -6,9 +6,7 @@ per-file interval index, replacing the O(N) scan approach with
 O(log N) binary search.
 """
 
-from __future__ import annotations
-
-import bisect
+from bisect import bisect_right
 from collections import defaultdict
 
 from axon.core.graph.graph import KnowledgeGraph
@@ -61,6 +59,7 @@ class FileSymbolIndex:
     def get_start_lines(self, file_path: str) -> list[int] | None:
         return self._start_lines.get(file_path)
 
+
 def build_file_symbol_index(
     graph: KnowledgeGraph,
     labels: tuple[NodeLabel, ...],
@@ -98,6 +97,7 @@ def build_file_symbol_index(
 
     return FileSymbolIndex(entries, start_lines)
 
+
 def find_containing_symbol(
     line: int,
     file_path: str,
@@ -126,7 +126,7 @@ def find_containing_symbol(
     start_lines = file_symbol_index.get_start_lines(file_path)
     if not start_lines:
         return None
-    idx = bisect.bisect_right(start_lines, line) - 1
+    idx = bisect_right(start_lines, line) - 1
 
     best_id: str | None = None
     best_span = float("inf")

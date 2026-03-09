@@ -1,7 +1,5 @@
 """File system walker for discovering and reading source files in a repository."""
 
-from __future__ import annotations
-
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +15,7 @@ class FileEntry:
     path: str  # relative path from repo root (e.g., "src/auth/validate.py")
     content: str  # full file content
     language: str  # "python", "typescript", "javascript"
+
 
 def discover_files(
     repo_path: Path,
@@ -61,6 +60,7 @@ def discover_files(
 
     return discovered
 
+
 def read_file(repo_path: Path, file_path: Path) -> FileEntry | None:
     """
     Read a single file and return a :class:`FileEntry`, or ``None`` on failure.
@@ -87,6 +87,7 @@ def read_file(repo_path: Path, file_path: Path) -> FileEntry | None:
         content=content,
         language=language,
     )
+
 
 def walk_repo(
     repo_path: Path,

@@ -7,8 +7,6 @@ indexes on label, relationship type, and adjacency lists ensure that queries
 scale linearly with the *result* set rather than the total graph size.
 """
 
-from __future__ import annotations
-
 from collections import defaultdict
 from collections.abc import Iterator
 
@@ -102,9 +100,7 @@ class KnowledgeGraph:
         Returns:
             The number of nodes removed.
         """
-        ids_to_remove = [
-            nid for nid, node in self._nodes.items() if node.file_path == file_path
-        ]
+        ids_to_remove = [nid for nid, node in self._nodes.items() if node.file_path == file_path]
         if not ids_to_remove:
             return 0
 
@@ -137,7 +133,9 @@ class KnowledgeGraph:
         return list(self._by_rel_type.get(rel_type, {}).values())
 
     def get_outgoing(
-        self, node_id: str, rel_type: RelType | None = None,
+        self,
+        node_id: str,
+        rel_type: RelType | None = None,
     ) -> list[GraphRelationship]:
         """
         Return relationships originating from *node_id*.
@@ -150,7 +148,9 @@ class KnowledgeGraph:
         return [r for r in rels.values() if r.type == rel_type]
 
     def get_incoming(
-        self, node_id: str, rel_type: RelType | None = None,
+        self,
+        node_id: str,
+        rel_type: RelType | None = None,
     ) -> list[GraphRelationship]:
         """
         Return relationships targeting *node_id*.
@@ -179,4 +179,3 @@ class KnowledgeGraph:
             self._relationships.pop(rel.id, None)
             self._by_rel_type.get(rel.type, {}).pop(rel.id, None)
             self._outgoing.get(rel.source, {}).pop(rel.id, None)
-
