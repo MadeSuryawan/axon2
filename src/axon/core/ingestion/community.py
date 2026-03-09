@@ -117,13 +117,13 @@ class Community:
             self._store_community(i, member_ids, modularity_score)
             community_count += 1
 
-            logger.info(
-                "Community %d: %r with %d members (modularity=%.3f)",
-                i,
-                self._generate_label(self._graph, member_ids),
-                len(member_indices),
-                modularity_score,
-            )
+            # logger.info(
+            #     "Community %d: %r with %d members (modularity=%.3f)",
+            #     i,
+            #     self._generate_label(self._graph, member_ids),
+            #     len(member_indices),
+            #     modularity_score,
+            # )
 
         logger.info(
             "Community detection complete: %d communities created.",
