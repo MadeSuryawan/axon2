@@ -199,6 +199,47 @@ def _report(result: PipelineResult) -> None:
     rprint(f"  Duration:       {result.duration_seconds:.2f}s")
 
 
+def _process_meta(
+    axon_dir: Path,
+    repo_path: Path,
+    storage: KuzuBackend,
+    *,
+    no_embeddings: bool = Option(
+        _FALSE,
+        "--no-embeddings",
+        help="Skip vector embedding generation.",
+    ),
+) -> PipelineResult:
+    """Check if meta.json exists, and if not, run initial indexing."""
+
+    pipelines = Pipelines(repo_path, storage, full=True, embeddings=not no_embeddings)
+    pipelines.run_pipelines()
+
+    meta = _build_meta(pipelines.result, repo_path)
+    meta_path = axon_dir / "meta.json"
+    meta_path.write_text(dumps(meta, indent=2) + "\n", encoding="utf-8")
+
+    try:
+        _register_in_global_registry(meta, repo_path)
+    except (RuntimeError, OSError, SystemError):
+        logger.debug("Failed to register repo in global registry", exc_info=True)
+
+    return pipelines.result
+
+
+def _check_meta_json(
+    axon_dir: Path,
+    repo_path: Path,
+    storage: KuzuBackend,
+    *,
+    no_embeddings: bool,
+) -> None:
+    if not (axon_dir / "meta.json").exists():
+        rprint("[b yellow]Un-initialize repo, running initial index....", file=stderr)
+        _process_meta(axon_dir, repo_path, storage, no_embeddings=no_embeddings)
+        rprint("[b green]Index complete.")
+
+
 app = Typer(
     name="axon",
     help="Axon — Graph-powered code intelligence engine.",
@@ -244,21 +285,7 @@ def analyze(
     repo_path, axon_dir, db_path = _get_path(path)
     rprint(f"[b green]Indexing [b magenta]{repo_path}")
     storage = _get_kuzu(db_path)
-
-    pipelines = Pipelines(repo_path, storage, full=full, embeddings=not no_embeddings)
-    pipelines.run_pipelines()
-    result = pipelines.result
-
-    meta = _build_meta(result, repo_path)
-    meta_path = axon_dir / "meta.json"
-    meta_path.write_text(dumps(meta, indent=2) + "\n", encoding="utf-8")
-
-    try:
-        _register_in_global_registry(meta, repo_path)
-    except (RuntimeError, OSError, SystemError, PermissionError):
-        logger.debug("Failed to register repo in global registry", exc_info=True)
-
-    _report(result)
+    _report(_process_meta(axon_dir, repo_path, storage, no_embeddings=no_embeddings))
     storage.close()
 
 
@@ -418,14 +445,20 @@ def setup(
 
 
 @app.command()
-def watch() -> None:
+def watch(
+    *,
+    no_embeddings: bool = Option(
+        _FALSE,
+        "--no-embeddings",
+        help="Skip vector embedding generation.",
+    ),
+) -> None:
     """Watch mode — re-index on file changes."""
 
     repo_path, axon_dir, db_path = _get_path()
     storage = _get_kuzu(db_path)
 
-    _check_meta_json(axon_dir, repo_path, storage)
-    rprint("[b green]Index complete.")
+    _check_meta_json(axon_dir, repo_path, storage, no_embeddings=no_embeddings)
 
     try:
         deps = WatcherDeps(repo_path, storage)
@@ -465,25 +498,6 @@ def mcp() -> None:
     asyncio_run(mcp_main())
 
 
-def _check_meta_json(axon_dir: Path, repo_path: Path, storage: KuzuBackend) -> None:
-    """Check if meta.json exists, and if not, run initial indexing."""
-
-    if not (axon_dir / "meta.json").exists():
-        rprint("[b yellow]Un-initialize repo, running initial index....", file=stderr)
-
-        pipelines = Pipelines(repo_path, storage, full=True)
-        pipelines.run_pipelines()
-
-        meta = _build_meta(pipelines.result, repo_path)
-        meta_path = axon_dir / "meta.json"
-        meta_path.write_text(dumps(meta, indent=2) + "\n", encoding="utf-8")
-
-        try:
-            _register_in_global_registry(meta, repo_path)
-        except (RuntimeError, OSError, SystemError):
-            logger.debug("Failed to register repo in global registry", exc_info=True)
-
-
 async def _run(
     repo_path: Path,
     storage: KuzuBackend,
@@ -520,6 +534,12 @@ def serve(
         "-w",
         help="Enable file watching with auto-reindex.",
     ),
+    full: bool = Option(_FALSE, "--full", help="Perform a full re-index."),
+    no_embeddings: bool = Option(
+        _FALSE,
+        "--no-embeddings",
+        help="Skip vector embedding generation.",
+    ),
 ) -> None:
     """Start MCP server, optionally with live file watching."""
 
@@ -530,8 +550,7 @@ def serve(
     repo_path, axon_dir, db_path = _get_path()
     storage = _get_kuzu(db_path)
 
-    _check_meta_json(axon_dir, repo_path, storage)
-    rprint("[b green]Index complete.")
+    _check_meta_json(axon_dir, repo_path, storage, no_embeddings=no_embeddings)
 
     try:
         rprint(
