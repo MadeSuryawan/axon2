@@ -7,8 +7,6 @@ separate node table, and a single ``CodeRelation`` relationship table group
 covers all source-to-target combinations.
 """
 
-from __future__ import annotations
-
 from collections import deque
 from contextlib import suppress
 from csv import writer as csv_writer
@@ -114,7 +112,7 @@ class KuzuBackend:
 
     def initialize(self, path: Path, *, read_only: bool = False) -> None:
         """
-                Open or create the KuzuDB database at *path* and set up the schema.
+        Open or create the KuzuDB database at *path* and set up the schema.
 
         Args:
             path: Filesystem path to the KuzuDB database directory.
@@ -130,7 +128,7 @@ class KuzuBackend:
 
     def close(self) -> None:
         """
-                Release the connection and database handles.
+        Release the connection and database handles.
 
         Explicitly deletes the connection and database objects to ensure
         KuzuDB releases file locks and flushes data.
@@ -157,7 +155,7 @@ class KuzuBackend:
 
     def remove_nodes_by_file(self, file_path: str) -> int:
         """
-                Delete all nodes whose ``file_path`` matches across every table.
+        Delete all nodes whose ``file_path`` matches across every table.
 
         Returns:
             Always 0 — exact count is not tracked for performance.
@@ -211,7 +209,7 @@ class KuzuBackend:
         exclude_source_files: set[str] | None = None,
     ) -> list[GraphRelationship]:
         """
-                Return inbound edges where target is in *file_path* and source is not.
+        Return inbound edges where target is in *file_path* and source is not.
 
         Edges whose source file is in *exclude_source_files* are skipped.
 
@@ -349,7 +347,7 @@ class KuzuBackend:
         direction: str = "callers",
     ) -> list[tuple[GraphNode, int]]:
         """
-                BFS traversal returning ``(node, hop_depth)`` pairs.
+        BFS traversal returning ``(node, hop_depth)`` pairs.
 
         ``hop_depth`` is 1-based: direct callers/callees are depth 1.
 
@@ -393,7 +391,7 @@ class KuzuBackend:
 
     def get_process_memberships(self, node_ids: list[str]) -> dict[str, str]:
         """
-                Return ``{node_id: process_name}`` for nodes in any Process.
+        Return ``{node_id: process_name}`` for nodes in any Process.
 
         Uses parameterized IN clause to safely query all node IDs at once.
         """
@@ -439,7 +437,7 @@ class KuzuBackend:
 
     def exact_name_search(self, name: str, limit: int = 5) -> list[SearchResult]:
         """
-                Search for nodes with an exact name match across all searchable tables.
+        Search for nodes with an exact name match across all searchable tables.
 
         Returns results sorted by label priority (functions/methods first),
         preferring source files over test files.
@@ -487,7 +485,7 @@ class KuzuBackend:
 
     def fts_search(self, query: str, limit: int) -> list[SearchResult]:
         """
-                BM25 full-text search using KuzuDB's native FTS extension.
+        BM25 full-text search using KuzuDB's native FTS extension.
 
         Searches across all node tables using pre-built FTS indexes on
         ``name``, ``content``, and ``signature`` fields.  Results are
@@ -552,7 +550,7 @@ class KuzuBackend:
 
     def fuzzy_search(self, query: str, limit: int, max_distance: int = 2) -> list[SearchResult]:
         """
-                Fuzzy name search using Levenshtein edit distance.
+        Fuzzy name search using Levenshtein edit distance.
 
         Scans all node tables for symbols whose name is within
         *max_distance* edits of *query*.  Converts edit distance to a
@@ -605,7 +603,7 @@ class KuzuBackend:
 
     def store_embeddings(self, embeddings: list[NodeEmbedding]) -> None:
         """
-                Persist embedding vectors into the Embedding node table.
+        Persist embedding vectors into the Embedding node table.
 
         Attempts batch CSV COPY FROM first, falls back to individual MERGE.
         """
@@ -645,7 +643,7 @@ class KuzuBackend:
 
     def vector_search(self, vector: list[float], limit: int) -> list[SearchResult]:
         """
-                Find the closest nodes to *vector* using native ``array_cosine_similarity``.
+        Find the closest nodes to *vector* using native ``array_cosine_similarity``.
 
         Computes cosine similarity directly in KuzuDB's Cypher engine —
         no Python-side computation or full-table load required.  Joins with
@@ -697,7 +695,7 @@ class KuzuBackend:
 
     def get_indexed_files(self) -> dict[str, str]:
         """
-                Return ``{file_path: sha256(content)}`` for all File nodes.
+        Return ``{file_path: sha256(content)}`` for all File nodes.
 
         Attempts to read pre-computed ``content_hash`` first. Falls back
         to computing the hash from content for databases that predate the
@@ -823,7 +821,7 @@ class KuzuBackend:
 
     def bulk_load(self, graph: KnowledgeGraph) -> None:
         """
-                Replace the entire store with the contents of *graph*.
+        Replace the entire store with the contents of *graph*.
 
         Uses CSV-based COPY FROM for bulk loading nodes and relationships,
         falling back to individual inserts if COPY FROM fails.
@@ -843,7 +841,7 @@ class KuzuBackend:
 
     def rebuild_fts_indexes(self) -> None:
         """
-                Drop and recreate all FTS indexes.
+        Drop and recreate all FTS indexes.
 
         Must be called after any bulk data change so the BM25 indexes
         reflect the current node contents.
@@ -864,7 +862,7 @@ class KuzuBackend:
 
     def _csv_copy(self, table: str, rows: list[list[Any]]) -> None:
         """
-                Write *rows* to a temporary CSV and COPY FROM into *table*.
+        Write *rows* to a temporary CSV and COPY FROM into *table*.
 
         Always cleans up the temp file, even on failure.
         """
@@ -887,7 +885,7 @@ class KuzuBackend:
 
     def _bulk_load_nodes_csv(self, graph: KnowledgeGraph) -> bool:
         """
-                Load all nodes via temporary CSV files + COPY FROM.
+        Load all nodes via temporary CSV files + COPY FROM.
 
         Returns True on success, False if COPY FROM is not available.
         """
@@ -926,7 +924,7 @@ class KuzuBackend:
 
     def _bulk_load_rels_csv(self, graph: KnowledgeGraph) -> bool:
         """
-                Load all relationships via temporary CSV files + COPY FROM.
+        Load all relationships via temporary CSV files + COPY FROM.
 
         Returns True on success, False if COPY FROM is not available.
         """
@@ -963,7 +961,7 @@ class KuzuBackend:
 
     def _bulk_store_embeddings_csv(self, embeddings: list[NodeEmbedding]) -> bool:
         """
-                Store embeddings via temporary CSV + COPY FROM.
+        Store embeddings via temporary CSV + COPY FROM.
 
         Returns True on success, False if COPY FROM is not available.
         """
@@ -1169,7 +1167,7 @@ class KuzuBackend:
     @staticmethod
     def _row_to_node(row: list[Any], node_id: str | None = None) -> GraphNode | None:
         """
-                Convert a result row from ``RETURN n.*`` into a GraphNode.
+        Convert a result row from ``RETURN n.*`` into a GraphNode.
 
         Column order matches the property definition:
         0=id, 1=name, 2=file_path, 3=start_line, 4=end_line,

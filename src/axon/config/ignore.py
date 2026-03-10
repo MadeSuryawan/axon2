@@ -64,6 +64,9 @@ def _matches_default_patterns(path: Path) -> bool:
     for part in path.parts:
         if part in _LITERAL_PATTERNS:
             return True
+        # Match directories like "mypackage.egg-info" by suffix.
+        if part.endswith(".egg-info"):
+            return True
         # Also check globs against every component (e.g. *.pyc as a directory — unlikely but consistent)
         for pattern in _GLOB_PATTERNS:
             if fnmatch(part, pattern):
