@@ -22,6 +22,7 @@ from typing import Any
 
 from kuzu import Connection, Database, QueryResult
 
+from axon.config.progress_bar import p_bar, reset_pbar, tqdm
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, GraphRelationship, NodeLabel, RelType
 from axon.core.storage.base import NodeEmbedding, SearchResult
@@ -128,6 +129,8 @@ class KuzuBackend:
         self._db: Database | None = None
         self._conn: Connection | None = None
         self._lock = Lock()
+        self._nodes_count: int = 0
+        self._table_count: int = len(_NODE_TABLE_NAMES)
 
     def _ensure_initialized(self) -> Connection:
         """
@@ -195,15 +198,23 @@ class KuzuBackend:
                 del self._db
             self._db = None
 
-    def add_nodes(self, nodes: list[GraphNode]) -> None:
+    def add_nodes(self, nodes: list[GraphNode], pbar: tqdm | None = None) -> None:
         """Insert nodes into their respective label tables."""
+        if pbar:
+            pbar = reset_pbar(pbar, len(nodes), "2. Adding nodes directly")
+
         for node in nodes:
             self._insert_node(node)
+            pbar.update() if pbar else None
 
-    def add_relationships(self, rels: list[GraphRelationship]) -> None:
+    def add_relationships(self, rels: list[GraphRelationship], pbar: tqdm | None = None) -> None:
         """Insert relationships by matching source and target nodes."""
+        if pbar:
+            pbar = reset_pbar(pbar, len(rels), "3. Adding relationships directly")
+
         for rel in rels:
             self._insert_relationship(rel)
+            pbar.update() if pbar else None
 
     def remove_nodes_by_file(self, file_path: str) -> int:
         """
@@ -941,40 +952,22 @@ class KuzuBackend:
         falling back to individual inserts if COPY FROM fails.
         """
         conn = self._ensure_initialized()
-        logger.info("Deleting detached tables...")
+        self._nodes_count = len(graph.nodes)
+        pbar = p_bar(desc="1. Deleting detached tables", total=self._table_count)
         for table in _NODE_TABLE_NAMES:
             with suppress(Exception):
                 conn.execute(f"MATCH (n:{table}) DETACH DELETE n")
+            pbar.update()
 
-        if not self._bulk_load_nodes_csv(graph):
-            self.add_nodes(list(graph.iter_nodes()))
+        if not self._bulk_load_nodes_csv(graph, pbar):
+            self.add_nodes(list(graph.iter_nodes()), pbar=pbar)
 
-        if not self._bulk_load_rels_csv(graph):
-            self.add_relationships(list(graph.iter_relationships()))
+        if not self._bulk_load_rels_csv(graph, pbar):
+            self.add_relationships(list(graph.iter_relationships()), pbar=pbar)
 
-        self.rebuild_fts_indexes()
-
-    def rebuild_fts_indexes(self) -> None:
-        """
-        Drop and recreate all FTS indexes.
-
-        Must be called after any bulk data change so the BM25 indexes
-        reflect the current node contents.
-        """
-        conn = self._ensure_initialized()
-        logger.info("Rebuilding FTS indexes...")
-        for table in _NODE_TABLE_NAMES:
-            idx_name = f"{table.lower()}_fts"
-            with suppress(Exception):
-                conn.execute(f"CALL DROP_FTS_INDEX('{table}', '{idx_name}')")
-
-            try:
-                conn.execute(
-                    f"CALL CREATE_FTS_INDEX('{table}', '{idx_name}', "
-                    f"['name', 'content', 'signature'])",
-                )
-            except RuntimeError:
-                logger.debug(f"FTS index rebuild failed for {table}", exc_info=True)
+        self.rebuild_fts_indexes(pbar)
+        pbar.set_description_str("Completed")
+        pbar.close()
 
     def _csv_copy(self, table: str, rows: list[list[Any]]) -> None:
         """
@@ -995,18 +988,22 @@ class KuzuBackend:
             if csv_path:
                 Path(csv_path).unlink(missing_ok=True)
 
-    def _bulk_load_nodes_csv(self, graph: KnowledgeGraph) -> bool:
+    def _bulk_load_nodes_csv(self, graph: KnowledgeGraph, pbar: tqdm) -> bool:
         """
         Load all nodes via temporary CSV files + COPY FROM.
 
         Returns True on success, False if COPY FROM is not available.
         """
+        # logger.info("Bulk loading nodes via temporary CSV files...")
+        pbar = reset_pbar(pbar, self._nodes_count, "Collecting nodes table")
         by_table: dict[str, list[GraphNode]] = {}
-        logger.info("Bulk loading nodes via temporary CSV files...")
+
         for node in graph.iter_nodes():
             table = _LABEL_TO_TABLE.get(node.label.value)
             by_table.setdefault(table, []).append(node) if table else None
+            pbar.update()
 
+        pbar = reset_pbar(pbar, len(by_table), "2. Bulk loading nodes")
         try:
             for table, nodes in by_table.items():
                 self._csv_copy(
@@ -1031,7 +1028,7 @@ class KuzuBackend:
                         for node in nodes
                     ],
                 )
-            return True
+                pbar.update()
         except RuntimeError:
             logger.debug("CSV nodes load bulk failed, falling back", exc_info=True)
             conn = self._ensure_initialized()
@@ -1039,21 +1036,26 @@ class KuzuBackend:
                 with suppress(RuntimeError):
                     conn.execute(f"MATCH (n:{table}) DETACH DELETE n")
             return False
+        return True
 
-    def _bulk_load_rels_csv(self, graph: KnowledgeGraph) -> bool:
+    def _bulk_load_rels_csv(self, graph: KnowledgeGraph, pbar: tqdm) -> bool:
         """
         Load all relationships via temporary CSV files + COPY FROM.
 
         Returns True on success, False if COPY FROM is not available.
         """
+        # logger.info("Bulk loading relationships via temporary CSV files...")
+        pbar = reset_pbar(pbar, self._nodes_count, "Collecting relationships table")
         by_pair: dict[tuple[str, str], list[GraphRelationship]] = {}
-        logger.info("Bulk loading relationships via temporary CSV files...")
+
         for rel in graph.iter_relationships():
             src_table = _table_for_id(rel.source)
             dst_table = _table_for_id(rel.target)
             if src_table and dst_table:
                 by_pair.setdefault((src_table, dst_table), []).append(rel)
+            pbar.update()
 
+        pbar = reset_pbar(pbar, len(by_pair), "3. Bulk loading relationship")
         try:
             for (src_table, dst_table), rels in by_pair.items():
                 self._csv_copy(
@@ -1073,10 +1075,36 @@ class KuzuBackend:
                         for rel in rels
                     ],
                 )
-            return True
+                pbar.update()
         except RuntimeError:
             logger.debug("CSV relationship load bulk failed, falling back", exc_info=True)
             return False
+
+        return True
+
+    def rebuild_fts_indexes(self, pbar: tqdm | None = None) -> None:
+        """
+        Drop and recreate all FTS indexes.
+
+        Must be called after any bulk data change so the BM25 indexes
+        reflect the current node contents.
+        """
+        conn = self._ensure_initialized()
+        if pbar:
+            pbar = reset_pbar(pbar, self._table_count, "4. Rebuilding FTS indexes")
+        for table in _NODE_TABLE_NAMES:
+            idx_name = f"{table.lower()}_fts"
+            with suppress(Exception):
+                conn.execute(f"CALL DROP_FTS_INDEX('{table}', '{idx_name}')")
+
+            try:
+                conn.execute(
+                    f"CALL CREATE_FTS_INDEX('{table}', '{idx_name}', "
+                    f"['name', 'content', 'signature'])",
+                )
+                pbar.update() if pbar else None
+            except RuntimeError:
+                logger.debug(f"FTS index rebuild failed for {table}", exc_info=True)
 
     def _bulk_store_embeddings_csv(self, embeddings: list[NodeEmbedding]) -> bool:
         """

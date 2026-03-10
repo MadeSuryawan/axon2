@@ -35,6 +35,10 @@ class KnowledgeGraph:
         self._outgoing: dict[str, dict[str, GraphRelationship]] = defaultdict(dict)
         self._incoming: dict[str, dict[str, GraphRelationship]] = defaultdict(dict)
 
+    @property
+    def nodes(self) -> dict[str, GraphNode]:
+        return self._nodes
+
     def iter_nodes(self) -> Iterator[GraphNode]:
         """Yield all nodes without creating an intermediate list."""
         return iter(self._nodes.values())
