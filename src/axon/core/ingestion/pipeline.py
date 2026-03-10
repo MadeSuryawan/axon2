@@ -163,7 +163,7 @@ class Pipelines:
         self._walk_files()
 
         _ = [
-            (rprint(f"\n[b blue]{phase}..."), pipeline())
+            (rprint(f"[b blue]{phase}..."), pipeline())
             for phase, pipeline in self._phases().items()
         ]
 
@@ -181,7 +181,7 @@ class Pipelines:
         self._result.relationships = self._graph.relationship_count
 
         if self._storage:
-            rprint("\n[b blue]Loading to storage...")
+            rprint("\n[b blue]4 Stages loading to storage...")
             self._storage.bulk_load(self._graph)
             if self._embeddings:
                 try:

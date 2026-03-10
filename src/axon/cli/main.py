@@ -424,10 +424,8 @@ def watch() -> None:
     repo_path, axon_dir, db_path = _get_path()
     storage = _get_kuzu(db_path)
 
-    if not (axon_dir / "meta.json").exists():
-        rprint("[bold]Running initial index...[/bold]")
-        pipelines = Pipelines(repo_path, storage, full=True)
-        pipelines.run_pipelines()
+    _check_meta_json(axon_dir, repo_path, storage)
+    rprint("[b green]Index complete.")
 
     try:
         deps = WatcherDeps(repo_path, storage)
@@ -471,7 +469,7 @@ def _check_meta_json(axon_dir: Path, repo_path: Path, storage: KuzuBackend) -> N
     """Check if meta.json exists, and if not, run initial indexing."""
 
     if not (axon_dir / "meta.json").exists():
-        rprint(f"[b yellow]No index found at {axon_dir}. Running initial index...", file=stderr)
+        rprint("[b yellow]Un-initialize repo, running initial index....", file=stderr)
 
         pipelines = Pipelines(repo_path, storage, full=True)
         pipelines.run_pipelines()
