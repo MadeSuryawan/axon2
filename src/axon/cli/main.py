@@ -73,6 +73,7 @@ def _get_kuzu(db_path: Path, *, read_only: bool = False) -> KuzuBackend:
     """Return a KuzuBackend initialised at *db_path*."""
     storage = KuzuBackend()
     storage.initialize(db_path, read_only=read_only)
+    rprint("[b green]KuzuDB initialised")
     return storage
 
 
@@ -104,49 +105,6 @@ def _load_storage(repo_path: Path | None = None) -> KuzuBackend:
     return _get_kuzu(db_path, read_only=True)
 
 
-def _register_in_global_registry(meta: dict, repo_path: Path) -> None:
-    """
-    Write meta.json into ``~/.axon/repos/{slug}/`` for multi-repo discovery.
-
-    Slug is ``{repo_name}`` if that slot is unclaimed or already belongs to
-    this repo.  Falls back to ``{repo_name}-{sha256(path)[:8]}`` on collision.
-    """
-    registry_root = Path.home() / ".axon" / "repos"
-    repo_name = repo_path.name
-
-    candidate = registry_root / repo_name
-    slug = repo_name
-    if candidate.exists():
-        existing_meta_path = candidate / "meta.json"
-        try:
-            existing = loads(existing_meta_path.read_text())
-            if existing.get("path") != str(repo_path):
-                short_hash = sha256(str(repo_path).encode()).hexdigest()[:8]
-                slug = f"{repo_name}-{short_hash}"
-        except (JSONDecodeError, OSError):
-            rmtree(candidate, ignore_errors=True)  # Clean broken slot before claiming
-
-    # Remove any stale entry for the same repo_path under a different slug.
-    if registry_root.exists():
-        for old_dir in registry_root.iterdir():
-            if not old_dir.is_dir() or old_dir.name == slug:
-                continue
-            old_meta = old_dir / "meta.json"
-            try:
-                old_data = loads(old_meta.read_text())
-                if old_data.get("path") == str(repo_path):
-                    rmtree(old_dir, ignore_errors=True)
-            except (JSONDecodeError, OSError):
-                continue
-
-    slot = registry_root / slug
-    slot.mkdir(parents=True, exist_ok=True)
-
-    registry_meta = dict(meta)
-    registry_meta["slug"] = slug
-    (slot / "meta.json").write_text(dumps(registry_meta, indent=2) + "\n", encoding="utf-8")
-
-
 def _build_meta(result: PipelineResult, repo_path: Path) -> dict[str, Any]:
     """Build the meta.json dict from a pipeline result."""
     return {
@@ -165,6 +123,80 @@ def _build_meta(result: PipelineResult, repo_path: Path) -> dict[str, Any]:
         },
         "last_indexed_at": datetime.now(tz=UTC).isoformat(),
     }
+
+
+def _register_in_global_registry(meta: dict, repo_path: Path) -> None:
+    """
+    Write meta.json into ``~/.axon/repos/{slug}/`` for multi-repo discovery.
+
+    Slug is ``{repo_name}`` if that slot is unclaimed or already belongs to
+    this repo.  Falls back to ``{repo_name}-{sha256(path)[:8]}`` on collision.
+    """
+    registry_root = Path.home() / ".axon" / "repos"
+    repo_name = repo_path.name
+    candidate = registry_root / repo_name
+
+    slug = _get_slug(repo_name, candidate, repo_path)
+    _remove_stale_entry(registry_root, slug, repo_path)
+
+    slot = registry_root / slug
+    slot.mkdir(parents=True, exist_ok=True)
+
+    registry_meta = dict(meta)
+    registry_meta["slug"] = slug
+    (slot / "meta.json").write_text(dumps(registry_meta, indent=2) + "\n", encoding="utf-8")
+
+
+def _get_slug(repo_name: str, candidate: Path, repo_path: Path) -> str:
+    """Repository metadata."""
+    slug = repo_name
+    if candidate.exists():
+        existing_meta_path = candidate / "meta.json"
+        try:
+            existing = loads(existing_meta_path.read_text())
+            if existing.get("path") != str(repo_path):
+                short_hash = sha256(str(repo_path).encode()).hexdigest()[:8]
+                slug = f"{repo_name}-{short_hash}"
+        except (JSONDecodeError, OSError):
+            rmtree(candidate, ignore_errors=True)  # Clean broken slot before claiming
+    return slug
+
+
+def _remove_stale_entry(registry_root: Path, slug: str, repo_path: Path) -> None:
+    """Remove any stale entry for the same repo_path under a different slug."""
+
+    if not registry_root.exists():
+        return
+
+    for old_dir in registry_root.iterdir():
+        if not old_dir.is_dir() or old_dir.name == slug:
+            continue
+        old_meta = old_dir / "meta.json"
+        with suppress(Exception):
+            old_data = loads(old_meta.read_text())
+            if old_data.get("path") != str(repo_path):
+                continue
+            rmtree(old_dir, ignore_errors=True)
+
+
+def _report(result: PipelineResult) -> None:
+
+    rprint()
+    rprint("[bold green]Indexing complete.[/bold green]")
+    rprint(f"  Files:          {result.files}")
+    rprint(f"  Symbols:        {result.symbols}")
+    rprint(f"  Relationships:  {result.relationships}")
+    if result.clusters > 0:
+        rprint(f"  Clusters:       {result.clusters}")
+    if result.processes > 0:
+        rprint(f"  Flows:          {result.processes}")
+    if result.dead_code > 0:
+        rprint(f"  Dead code:      {result.dead_code}")
+    if result.coupled_pairs > 0:
+        rprint(f"  Coupled pairs:  {result.coupled_pairs}")
+    if result.embeddings > 0:
+        rprint(f"  Embeddings:     {result.embeddings}")
+    rprint(f"  Duration:       {result.duration_seconds:.2f}s")
 
 
 app = Typer(
@@ -212,7 +244,6 @@ def analyze(
     repo_path, axon_dir, db_path = _get_path(path)
     rprint(f"[b green]Indexing [b magenta]{repo_path}")
     storage = _get_kuzu(db_path)
-    rprint("[b green]KuzuDB initialised")
 
     pipelines = Pipelines(repo_path, storage, full=full, embeddings=not no_embeddings)
     pipelines.run_pipelines()
@@ -224,26 +255,10 @@ def analyze(
 
     try:
         _register_in_global_registry(meta, repo_path)
-    except (RuntimeError, OSError, SystemError):
+    except (RuntimeError, OSError, SystemError, PermissionError):
         logger.debug("Failed to register repo in global registry", exc_info=True)
 
-    rprint()
-    rprint("[bold green]Indexing complete.[/bold green]")
-    rprint(f"  Files:          {result.files}")
-    rprint(f"  Symbols:        {result.symbols}")
-    rprint(f"  Relationships:  {result.relationships}")
-    if result.clusters > 0:
-        rprint(f"  Clusters:       {result.clusters}")
-    if result.processes > 0:
-        rprint(f"  Flows:          {result.processes}")
-    if result.dead_code > 0:
-        rprint(f"  Dead code:      {result.dead_code}")
-    if result.coupled_pairs > 0:
-        rprint(f"  Coupled pairs:  {result.coupled_pairs}")
-    if result.embeddings > 0:
-        rprint(f"  Embeddings:     {result.embeddings}")
-    rprint(f"  Duration:       {result.duration_seconds:.2f}s")
-
+    _report(result)
     storage.close()
 
 
