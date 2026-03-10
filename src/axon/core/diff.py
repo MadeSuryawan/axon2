@@ -15,7 +15,7 @@ from tempfile import TemporaryDirectory
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, GraphRelationship
-from axon.core.ingestion.pipeline import build_graph
+from axon.core.ingestion.pipeline import Pipelines
 
 logger = getLogger(__name__)
 
@@ -141,7 +141,7 @@ def diff_branches(
             base_graph = base_future.result()
             current_graph = current_future.result()
     else:
-        current_graph = build_graph(repo_path)
+        current_graph = Pipelines(repo_path).build_graph()
         base_graph = _build_graph_for_ref(repo_path, base_ref)
 
     base_nodes = {n.id: n for n in base_graph.iter_nodes()}
@@ -178,7 +178,7 @@ def _create_worktree(command: list[str], repo_path: Path, ref: str) -> None:
 def _remove_worktree(command: list[str], repo_path: Path, worktree_path: Path) -> KnowledgeGraph:
     """Remove a worktree."""
     try:
-        graph = build_graph(worktree_path)
+        graph = Pipelines(worktree_path).build_graph()
     finally:
         try:
             run(command, cwd=repo_path, capture_output=True, text=True, check=True)

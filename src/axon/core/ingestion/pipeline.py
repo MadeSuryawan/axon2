@@ -162,10 +162,8 @@ class Pipelines:
         start = monotonic()
         self._walk_files()
 
-        _ = [
-            (rprint(f"[b blue]{phase}..."), pipeline())
-            for phase, pipeline in self._phases().items()
-        ]
+        for phase, pipeline in self._phases().items():
+            rprint(f"[b blue]{phase}..."), pipeline()
 
         self._update_rest_result()
         self._result.duration_seconds = monotonic() - start
@@ -197,11 +195,23 @@ class Pipelines:
                 return
             rprint("\n[b yellow]Embedding disabled — search will use FTS only")
 
+    def build_graph(self) -> KnowledgeGraph:
+        """
+        Run phases 1-11 and return the in-memory graph (no storage load).
+
+        This is used by branch comparison to build a graph snapshot without
+        needing a storage backend.
+        """
+        self.run_pipelines()
+        return self.graph
+
 
 def reindex_files(
     file_entries: list[FileEntry],
     repo_path: Path,
     storage: StorageBackend,
+    *,
+    rebuild_fts: bool = True,
 ) -> KnowledgeGraph:
     """
     Re-index specific files through phases 2-7 (file-local phases).
@@ -218,6 +228,8 @@ def reindex_files(
         Root directory of the repository.
     storage:
         An already-initialised storage backend.
+    rebuild_fts:
+        Wether to rebuild the FTS or not
 
     Returns
     -------
@@ -236,7 +248,7 @@ def reindex_files(
     for entry in file_entries:
         storage.remove_nodes_by_file(entry.path)
 
-    graph = KnowledgeGraph()
+    graph = storage.load_graph()
 
     Structure(graph).process_structure(file_entries)
     parse_data = Parsing(graph).process_parsing(file_entries)
@@ -251,18 +263,7 @@ def reindex_files(
     if saved_edges:
         storage.add_relationships(saved_edges)
 
-    storage.rebuild_fts_indexes()
+    if rebuild_fts:
+        storage.rebuild_fts_indexes()
 
     return graph
-
-
-def build_graph(repo_path: Path) -> KnowledgeGraph:
-    """
-    Run phases 1-11 and return the in-memory graph (no storage load).
-
-    This is used by branch comparison to build a graph snapshot without
-    needing a storage backend.
-    """
-    pipelines = Pipelines(repo_path)
-    pipelines.run_pipelines()
-    return pipelines.graph
