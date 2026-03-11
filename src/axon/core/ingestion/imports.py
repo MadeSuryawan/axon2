@@ -10,7 +10,9 @@ data for multiple files, resolves their imports to actual project files,
 and creates IMPORTS relationships in the knowledge graph.
 """
 
+from concurrent.futures.thread import ThreadPoolExecutor
 from logging import getLogger
+from os import cpu_count
 from pathlib import PurePosixPath
 
 from axon.core.graph.graph import KnowledgeGraph
@@ -21,6 +23,7 @@ from axon.core.graph.model import (
     generate_id,
 )
 from axon.core.ingestion.parser_phase import FileParseData
+from axon.core.ingestion.resolved import ResolvedEdge
 from axon.core.parsers.base import ImportInfo
 
 logger = getLogger(__name__)
@@ -46,18 +49,30 @@ class Imports:
     # Tuple of file extensions used by JavaScript/TypeScript
     _JS_TS_EXTENSIONS: tuple[str, ...] = (".ts", ".js", ".tsx", ".jsx")
 
-    def __init__(self, graph: KnowledgeGraph, parse_data: list[FileParseData]) -> None:
+    def __init__(
+        self,
+        graph: KnowledgeGraph,
+        parse_data: list[FileParseData],
+        file_index: dict[str, str] | None = None,
+    ) -> None:
         """
         Initialize the Imports analyzer.
 
         Args:
             graph: The knowledge graph to analyze and enrich.
             parse_data: The parse data containing imports for each file.
+            file_index: A mapping of file paths to graph node IDs for all File nodes.
         """
         self._graph = graph
         self._parse_data = parse_data
+        self._file_index = file_index
 
-    def process_imports(self) -> None:
+    def process_imports(
+        self,
+        *,
+        parallel: bool = False,
+        collect: bool = False,
+    ) -> list[ResolvedEdge] | None:
         """
         Resolve imports and create IMPORTS relationships in the graph.
 
@@ -74,34 +89,66 @@ class Imports:
 
         """
         # Build a mapping of file paths to their node IDs for fast lookup
-        file_index = self._build_file_index()
+        if self._file_index is None:
+            self._file_index = self.build_file_index()
+        source_roots = self._detect_source_roots()
 
-        # Track seen (source, target) pairs to prevent duplicate edges
-        seen: set[tuple[str, str]] = set()
+        if parallel:
+            workers = min(cpu_count() or 4, 8, len(self._parse_data))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                all_edges = list(
+                    pool.map(
+                        lambda fpd: self.resolve_file_imports(fpd, source_roots),
+                        self._parse_data,
+                    ),
+                )
+        else:
+            all_edges = [self.resolve_file_imports(fpd, source_roots) for fpd in self._parse_data]
 
-        for fpd in self._parse_data:
-            # Get the ID for the file that contains the imports
-            source_file_id = generate_id(NodeLabel.FILE, fpd.file_path)
+        if collect:
+            return [edge for file_edges in all_edges for edge in file_edges]
 
-            # Process each import from this file
-            for imp in fpd.parse_result.imports:
-                # Resolve the import to a target file node ID
-                target_id = self._resolve_import_path(fpd.file_path, imp, file_index)
+        self._write_import_edges(all_edges)
+        logger.info("Imports resolved")
 
-                # Skip external/unresolvable imports
-                if target_id is None:
-                    continue
+    def resolve_file_imports(
+        self,
+        fpd: FileParseData,
+        source_roots: set[str],
+    ) -> list[ResolvedEdge]:
+        """
+        Resolve imports for a single file — pure read, no graph mutation.
 
-                # Skip duplicate edges to the same target
-                pair = (source_file_id, target_id)
-                if pair in seen:
-                    continue
-                seen.add(pair)
+        Returns one :class:`ResolvedEdge` per unique ``(source, target)`` pair
+        with per-file merged symbols.  Cross-file symbol merging happens in the
+        caller.
+        """
+        source_file_id = generate_id(NodeLabel.FILE, fpd.file_path)
+        pair_symbols: dict[str, set[str]] = {}
 
-                # Create the IMPORTS relationship
-                self._create_imports_relationship(source_file_id, target_id, imp.names)
+        for imp in fpd.parse_result.imports:
+            target_id = self._resolve_import_path(fpd.file_path, imp, source_roots)
+            if target_id is None:
+                continue
+            if target_id not in pair_symbols:
+                pair_symbols[target_id] = set()
+            pair_symbols[target_id].update(imp.names)
 
-    def _build_file_index(self) -> dict[str, str]:
+        edges: list[ResolvedEdge] = []
+        for target_id, symbols in pair_symbols.items():
+            rel_id = f"imports:{source_file_id}->{target_id}"
+            edges.append(
+                ResolvedEdge(
+                    rel_id=rel_id,
+                    rel_type=RelType.IMPORTS,
+                    source=source_file_id,
+                    target=target_id,
+                    properties={"symbols": symbols},
+                ),
+            )
+        return edges
+
+    def build_file_index(self) -> dict[str, str]:
         """
         Build an index mapping file paths to their graph node IDs.
 
@@ -115,11 +162,36 @@ class Imports:
         file_nodes = self._graph.get_nodes_by_label(NodeLabel.FILE)
         return {node.file_path: node.id for node in file_nodes}
 
+    def _write_import_edges(self, all_edges: list[list[ResolvedEdge]]) -> None:
+        """Merge cross-file symbol sets and write IMPORTS edges to the graph."""
+        merged: dict[str, tuple[str, str, set[str]]] = {}
+        for file_edges in all_edges:
+            for edge in file_edges:
+                if edge.rel_id in merged:
+                    merged[edge.rel_id][2].update(edge.properties["symbols"])
+                else:
+                    merged[edge.rel_id] = (
+                        edge.source,
+                        edge.target,
+                        set(edge.properties["symbols"]),
+                    )
+
+        for rel_id, (source, target, symbols) in merged.items():
+            self._graph.add_relationship(
+                GraphRelationship(
+                    id=rel_id,
+                    type=RelType.IMPORTS,
+                    source=source,
+                    target=target,
+                    properties={"symbols": ",".join(sorted(symbols))},
+                ),
+            )
+
     def _resolve_import_path(
         self,
         importing_file: str,
         import_info: ImportInfo,
-        file_index: dict[str, str],
+        source_roots: set[str] | None = None,
     ) -> str | None:
         """
         Resolve an import statement to the target file's node ID.
@@ -136,7 +208,7 @@ class Imports:
         Args:
             importing_file: Relative path of the file containing the import.
             import_info: The parsed import information.
-            file_index: Mapping of file paths to node IDs.
+            source_roots: Python source root directories (e.g. src/) from the file index.
 
         Returns:
             The node ID of the resolved target file, or ``None`` if the
@@ -145,11 +217,32 @@ class Imports:
         language = self._detect_language(importing_file)
 
         if language == "python":
-            return self._resolve_python(importing_file, import_info, file_index)
+            return self._resolve_python(importing_file, import_info, source_roots)
         if language in ("typescript", "javascript"):
-            return self._resolve_js_ts(importing_file, import_info, file_index)
+            return self._resolve_js_ts(importing_file, import_info)
 
-        return None
+    def _detect_source_roots(self) -> set[str]:
+        """
+        Detect Python source root directories (e.g. ``src/``) from the file index.
+
+        A source root is a directory whose children have ``__init__.py`` but the
+        directory itself does not, indicating a ``src/`` layout.
+        """
+        if not self._file_index:
+            return set()
+
+        init_dirs: set[str] = set()
+        for path in self._file_index:
+            if not path.endswith("/__init__.py"):
+                continue
+            init_dirs.add(str(PurePosixPath(path).parent))
+
+        roots: set[str] = set()
+        for d in init_dirs:
+            parent = str(PurePosixPath(d).parent)
+            if parent != "." and parent not in init_dirs:
+                roots.add(parent)
+        return roots
 
     @staticmethod
     def _detect_language(file_path: str) -> str:
@@ -175,7 +268,7 @@ class Imports:
         self,
         importing_file: str,
         import_info: ImportInfo,
-        file_index: dict[str, str],
+        source_roots: set[str] | None = None,
     ) -> str | None:
         """
         Resolve a Python import to a file node ID.
@@ -191,21 +284,16 @@ class Imports:
         Args:
             importing_file: Path of the file containing the import.
             import_info: The parsed import information.
-            file_index: Mapping of file paths to node IDs.
+            source_roots: Python source root directories (e.g. src/) from the file index.
 
         Returns:
             The node ID of the target file, or ``None`` if external.
         """
         if import_info.is_relative:
-            return self._resolve_python_relative(importing_file, import_info, file_index)
-        return self._resolve_python_absolute(import_info, file_index)
+            return self._resolve_python_relative(importing_file, import_info)
+        return self._resolve_python_absolute(import_info, source_roots)
 
-    def _resolve_python_relative(
-        self,
-        importing_file: str,
-        import_info: ImportInfo,
-        file_index: dict[str, str],
-    ) -> str | None:
+    def _resolve_python_relative(self, importing_file: str, import_info: ImportInfo) -> str | None:
         """
         Resolve a relative Python import (``from .foo import bar``).
 
@@ -222,7 +310,6 @@ class Imports:
         Args:
             importing_file: Path of the importing file.
             import_info: The parsed import information.
-            file_index: Mapping of file paths to node IDs.
 
         Returns:
             The node ID of the target file, or ``None`` if not found.
@@ -254,12 +341,12 @@ class Imports:
         else:
             target_dir = base
 
-        return self._try_python_paths(str(target_dir), file_index)
+        return self._try_python_paths(str(target_dir))
 
-    @staticmethod
     def _resolve_python_absolute(
+        self,
         import_info: ImportInfo,
-        file_index: dict[str, str],
+        source_roots: set[str] | None = None,
     ) -> str | None:
         """
         Resolve an absolute Python import (``from mypackage.auth import validate``).
@@ -274,7 +361,7 @@ class Imports:
 
         Args:
             import_info: The parsed import information.
-            file_index: Mapping of file paths to node IDs.
+            source_roots: Python source root directories (e.g. src/) from the file index.
 
         Returns:
             The node ID of the target file, or ``None`` if external.
@@ -282,10 +369,9 @@ class Imports:
         module = import_info.module
         segments = module.split(".")
         target_path = str(PurePosixPath(*segments))
-        return Imports._try_python_paths(target_path, file_index)
+        return self._try_python_paths(target_path)
 
-    @staticmethod
-    def _try_python_paths(base_path: str, file_index: dict[str, str]) -> str | None:
+    def _try_python_paths(self, base_path: str) -> str | None:
         """
         Try common Python file resolution patterns for a base path.
 
@@ -295,25 +381,26 @@ class Imports:
 
         Args:
             base_path: The base path without extension (e.g., ``src/auth/utils``).
-            file_index: Mapping of file paths to node IDs.
 
         Returns:
             The first matching file's node ID, or ``None`` if no match found.
         """
+        if not self._file_index:
+            return
+
         candidates = [
             f"{base_path}.py",
             f"{base_path}/__init__.py",
         ]
         for candidate in candidates:
-            if candidate in file_index:
-                return file_index[candidate]
+            if candidate in self._file_index:
+                return self._file_index[candidate]
         return None
 
     def _resolve_js_ts(
         self,
         importing_file: str,
         import_info: ImportInfo,
-        file_index: dict[str, str],
     ) -> str | None:
         """
         Resolve a JavaScript/TypeScript import to a file node ID.
@@ -331,7 +418,6 @@ class Imports:
         Args:
             importing_file: Path of the importing file.
             import_info: The parsed import information.
-            file_index: Mapping of file paths to node IDs.
 
         Returns:
             The node ID of the target file, or ``None`` if external or not found.
@@ -349,9 +435,9 @@ class Imports:
         # Normalize the path components
         resolved_str = str(PurePosixPath(*resolved.parts))
 
-        return self._try_js_ts_paths(resolved_str, file_index)
+        return self._try_js_ts_paths(resolved_str)
 
-    def _try_js_ts_paths(self, base_path: str, file_index: dict[str, str]) -> str | None:
+    def _try_js_ts_paths(self, base_path: str) -> str | None:
         """
         Try common JavaScript/TypeScript file resolution patterns.
 
@@ -369,21 +455,25 @@ class Imports:
         Returns:
             The first matching file's node ID, or ``None`` if no match found.
         """
+
+        if not self._file_index:
+            return
+
         # Strategy 1: Exact match (import already includes extension).
-        if base_path in file_index:
-            return file_index[base_path]
+        if base_path in self._file_index:
+            return self._file_index[base_path]
 
         # Strategy 2: Try appending each known extension.
         for ext in self._JS_TS_EXTENSIONS:
             candidate = f"{base_path}{ext}"
-            if candidate in file_index:
-                return file_index[candidate]
+            if candidate in self._file_index:
+                return self._file_index[candidate]
 
         # Strategy 3: Treat as directory and look for index file.
         for ext in self._JS_TS_EXTENSIONS:
             candidate = f"{base_path}/index{ext}"
-            if candidate in file_index:
-                return file_index[candidate]
+            if candidate in self._file_index:
+                return self._file_index[candidate]
 
         return None
 

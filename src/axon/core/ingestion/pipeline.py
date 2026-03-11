@@ -41,6 +41,7 @@ from axon.core.ingestion.imports import Imports
 from axon.core.ingestion.parser_phase import FileParseData, Parsing
 from axon.core.ingestion.processes import Processes
 from axon.core.ingestion.structure import Structure
+from axon.core.ingestion.symbol_lookup import build_name_index
 from axon.core.ingestion.types import process_types
 from axon.core.ingestion.walker import FileEntry, walk_repo
 from axon.core.storage.base import StorageBackend
@@ -121,7 +122,9 @@ class Pipelines:
                 "_parsed_data",
                 Parsing(self._graph).process_parsing(self._files),
             ),
-            "Resolving imports": lambda: Imports(self._graph, self._parsed_data).process_imports(),
+            "Resolving imports": lambda: Imports(self._graph, self._parsed_data).process_imports(
+                parallel=True,
+            ),
             "Tracing calls": lambda: Calls(self._parsed_data, self._graph).process_calls(),
             "Extracting heritage": lambda: Heritage(
                 self._graph,
@@ -208,7 +211,6 @@ class Pipelines:
 
 def reindex_files(
     file_entries: list[FileEntry],
-    repo_path: Path,
     storage: StorageBackend,
     *,
     rebuild_fts: bool = True,
@@ -239,7 +241,30 @@ def reindex_files(
     # DETACH DELETE drops inbound edges from unchanged files — save them
     # before deletion and re-insert after rebuild.
     changed_files = {entry.path for entry in file_entries}
-    saved_edges: list[GraphRelationship] = []
+    saved_edges = _collect_saved_edges(changed_files, storage, file_entries)
+
+    graph = storage.load_graph()
+    Structure(graph).process_structure(file_entries)
+
+    parse_data = Parsing(graph).process_parsing(file_entries)
+    shared_name_index, heritage_name_index = _get_heritage_name_idx(graph)
+
+    Imports(graph, parse_data).process_imports()
+    Calls(parse_data, graph).process_calls()
+    Heritage(graph, parse_data).process_heritage()
+    process_types(parse_data, graph)
+    _update_storage(graph, storage, changed_files, saved_edges, rebuild_fts=rebuild_fts)
+
+    return graph
+
+
+def _collect_saved_edges(
+    changed_files: set[str],
+    storage: StorageBackend,
+    file_entries: list[FileEntry],
+) -> list[GraphRelationship]:
+
+    saved_edges = []
     for fp in changed_files:
         saved_edges.extend(
             storage.get_inbound_cross_file_edges(fp, exclude_source_files=changed_files),
@@ -248,22 +273,62 @@ def reindex_files(
     for entry in file_entries:
         storage.remove_nodes_by_file(entry.path)
 
-    graph = storage.load_graph()
+    return saved_edges
 
-    Structure(graph).process_structure(file_entries)
-    parse_data = Parsing(graph).process_parsing(file_entries)
-    Imports(graph, parse_data).process_imports()
-    Calls(parse_data, graph).process_calls()
-    Heritage(graph, parse_data).process_heritage()
-    process_types(parse_data, graph)
 
-    storage.add_nodes(list(graph.iter_nodes()))
-    storage.add_relationships(list(graph.iter_relationships()))
+def _get_heritage_name_idx(graph: KnowledgeGraph) -> tuple[dict[str, list[str]], ...]:
+    shared_labels = (
+        NodeLabel.FUNCTION,
+        NodeLabel.METHOD,
+        NodeLabel.CLASS,
+        NodeLabel.INTERFACE,
+        NodeLabel.TYPE_ALIAS,
+    )
+    shared_name_index = build_name_index(graph, shared_labels)
+    heritage_labels = {NodeLabel.CLASS, NodeLabel.INTERFACE}
+    heritage_name_index: dict[str, list[str]] = {}
+    for name, ids in shared_name_index.items():
+        filtered = [nid for nid in ids if (n := graph.get_node(nid)) and n.label in heritage_labels]
+        heritage_name_index.update({name: filtered}) if filtered else None
+
+    return shared_name_index, heritage_name_index
+
+
+def _update_storage(
+    graph: KnowledgeGraph,
+    storage: StorageBackend,
+    changed_files: set[str],
+    saved_edges: list[GraphRelationship],
+    *,
+    rebuild_fts: bool,
+) -> None:
+
+    incremental_nodes = [
+        node
+        for node in graph.iter_nodes()
+        if (
+            node.file_path in changed_files
+            or (
+                node.label == NodeLabel.FOLDER
+                and any(
+                    file_path == node.file_path or file_path.startswith(f"{node.file_path}/")
+                    for file_path in changed_files
+                )
+            )
+        )
+    ]
+    incremental_node_ids = {node.id for node in incremental_nodes}
+    incremental_relationships = [
+        rel
+        for rel in graph.iter_relationships()
+        if rel.source in incremental_node_ids or rel.target in incremental_node_ids
+    ]
+
+    storage.add_nodes(incremental_nodes)
+    storage.add_relationships(incremental_relationships)
 
     if saved_edges:
         storage.add_relationships(saved_edges)
 
     if rebuild_fts:
         storage.rebuild_fts_indexes()
-
-    return graph

@@ -125,7 +125,7 @@ class TestReindexFiles:
             content=(tmp_repo / "src" / "app.py").read_text(),
             language="python",
         )
-        reindex_files([entry], tmp_repo, storage)
+        reindex_files([entry], storage)
 
         # Verify updated node.
         node = storage.get_node("function:src/app.py:hello")

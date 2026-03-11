@@ -75,7 +75,7 @@ def parse_data() -> list[FileParseData]:
 def file_index(graph: KnowledgeGraph, parse_data: list[FileParseData]) -> dict[str, str]:
     """Return the file index built from the fixture graph."""
     imports_handler = Imports(graph, parse_data)
-    return imports_handler._build_file_index()
+    return imports_handler.build_file_index()
 
 
 # ---------------------------------------------------------------------------
@@ -84,11 +84,11 @@ def file_index(graph: KnowledgeGraph, parse_data: list[FileParseData]) -> dict[s
 
 
 class TestBuildFileIndex:
-    """_build_file_index creates correct mapping from graph File nodes."""
+    """build_file_index creates correct mapping from graph File nodes."""
 
     def test_build_file_index(self, graph: KnowledgeGraph, parse_data: list[FileParseData]) -> None:
         imports_handler = Imports(graph, parse_data)
-        index = imports_handler._build_file_index()
+        index = imports_handler.build_file_index()
 
         assert len(index) == len(_FILE_PATHS)
         for path, _ in _FILE_PATHS:
@@ -99,7 +99,7 @@ class TestBuildFileIndex:
         g = KnowledgeGraph()
         parse_data = []
         imports_handler = Imports(g, parse_data)
-        index = imports_handler._build_file_index()
+        index = imports_handler.build_file_index()
         assert index == {}
 
     def test_build_file_index_ignores_non_file_nodes(self) -> None:
@@ -122,7 +122,7 @@ class TestBuildFileIndex:
             ),
         )
         imports_handler = Imports(g, [])
-        index = imports_handler._build_file_index()
+        index = imports_handler.build_file_index()
         assert len(index) == 1
         assert "src/app.py" in index
 
@@ -133,24 +133,28 @@ class TestBuildFileIndex:
 
 
 class TestResolvePythonRelativeImport:
-    """from .utils import helper in src/auth/validate.py -> src/auth/utils.py."""
+    """Relative Python imports resolve through the public collection flow."""
 
     def test_resolve_python_relative_import(
         self,
         graph: KnowledgeGraph,
         parse_data: list[FileParseData],
-        file_index: dict[str, str],
     ) -> None:
         imports_handler = Imports(graph, parse_data)
-        imp = ImportInfo(module=".utils", names=["helper"], is_relative=True)
-        result = imports_handler._resolve_import_path("src/auth/validate.py", imp, file_index)
+        result = imports_handler.process_imports(collect=True)
 
-        expected_id = generate_id(NodeLabel.FILE, "src/auth/utils.py")
-        assert result == expected_id
+        assert result is not None
+        assert len(result) == 1
+
+        edge = result[0]
+        assert edge.source == generate_id(NodeLabel.FILE, "src/auth/validate.py")
+        assert edge.target == generate_id(NodeLabel.FILE, "src/auth/utils.py")
+        assert edge.properties["symbols"] == {"helper"}
+        assert graph.get_relationships_by_type(RelType.IMPORTS) == []
 
 
 class TestResolvePythonParentRelative:
-    """from ..models import User in src/auth/validate.py -> src/models/__init__.py."""
+    """Parent-relative Python imports resolve to project files."""
 
     def test_resolve_python_parent_relative(
         self,
@@ -158,15 +162,15 @@ class TestResolvePythonParentRelative:
         parse_data: list[FileParseData],
         file_index: dict[str, str],
     ) -> None:
-        imports_handler = Imports(graph, parse_data)
+        imports_handler = Imports(graph, parse_data, file_index)
         imp = ImportInfo(module="..models", names=["User"], is_relative=True)
-        result = imports_handler._resolve_import_path("src/auth/validate.py", imp, file_index)
+        result = imports_handler._resolve_import_path("src/auth/validate.py", imp)
 
         expected_id = generate_id(NodeLabel.FILE, "src/models/__init__.py")
         assert result == expected_id
 
     def test_resolve_python_parent_relative_direct_module(self) -> None:
-        """When models.py exists instead of models/__init__.py."""
+        """Collection mode resolves a direct module target when no package exists."""
         g = KnowledgeGraph()
         g.add_node(
             GraphNode(
@@ -186,14 +190,26 @@ class TestResolvePythonParentRelative:
                 language="python",
             ),
         )
-        imports_handler = Imports(g, [])
-        index = imports_handler._build_file_index()
+        parse_data = [
+            FileParseData(
+                file_path="src/auth/validate.py",
+                language="python",
+                parse_result=ParseResult(
+                    imports=[
+                        ImportInfo(module="..models", names=["User"], is_relative=True),
+                    ],
+                ),
+            ),
+        ]
+        imports_handler = Imports(g, parse_data)
 
-        imp = ImportInfo(module="..models", names=["User"], is_relative=True)
-        result = imports_handler._resolve_import_path("src/auth/validate.py", imp, index)
+        result = imports_handler.process_imports(collect=True)
 
-        expected_id = generate_id(NodeLabel.FILE, "src/models.py")
-        assert result == expected_id
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].target == generate_id(NodeLabel.FILE, "src/models.py")
+        assert result[0].properties["symbols"] == {"User"}
+        assert g.get_relationships_by_type(RelType.IMPORTS) == []
 
 
 class TestResolvePythonExternal:
@@ -205,9 +221,9 @@ class TestResolvePythonExternal:
         parse_data: list[FileParseData],
         file_index: dict[str, str],
     ) -> None:
-        imports_handler = Imports(graph, parse_data)
+        imports_handler = Imports(graph, parse_data, file_index)
         imp = ImportInfo(module="os", names=[], is_relative=False)
-        result = imports_handler._resolve_import_path("src/auth/validate.py", imp, file_index)
+        result = imports_handler._resolve_import_path("src/auth/validate.py", imp)
         assert result is None
 
     def test_resolve_python_external_from_import(
@@ -216,9 +232,9 @@ class TestResolvePythonExternal:
         parse_data: list[FileParseData],
         file_index: dict[str, str],
     ) -> None:
-        imports_handler = Imports(graph, parse_data)
+        imports_handler = Imports(graph, parse_data, file_index)
         imp = ImportInfo(module="os.path", names=["join"], is_relative=False)
-        result = imports_handler._resolve_import_path("src/auth/validate.py", imp, file_index)
+        result = imports_handler._resolve_import_path("src/auth/validate.py", imp)
         assert result is None
 
 
@@ -236,9 +252,9 @@ class TestResolveTsRelative:
         parse_data: list[FileParseData],
         file_index: dict[str, str],
     ) -> None:
-        imports_handler = Imports(graph, parse_data)
+        imports_handler = Imports(graph, parse_data, file_index)
         imp = ImportInfo(module="./utils", names=["foo"], is_relative=False)
-        result = imports_handler._resolve_import_path("lib/index.ts", imp, file_index)
+        result = imports_handler._resolve_import_path("lib/index.ts", imp)
 
         expected_id = generate_id(NodeLabel.FILE, "lib/utils.ts")
         assert result == expected_id
@@ -253,9 +269,9 @@ class TestResolveTsDirectoryIndex:
         parse_data: list[FileParseData],
         file_index: dict[str, str],
     ) -> None:
-        imports_handler = Imports(graph, parse_data)
+        imports_handler = Imports(graph, parse_data, file_index)
         imp = ImportInfo(module="./models", names=["User"], is_relative=False)
-        result = imports_handler._resolve_import_path("lib/index.ts", imp, file_index)
+        result = imports_handler._resolve_import_path("lib/index.ts", imp)
 
         expected_id = generate_id(NodeLabel.FILE, "lib/models/index.ts")
         assert result == expected_id
@@ -270,9 +286,9 @@ class TestResolveTsExternal:
         parse_data: list[FileParseData],
         file_index: dict[str, str],
     ) -> None:
-        imports_handler = Imports(graph, parse_data)
+        imports_handler = Imports(graph, parse_data, file_index)
         imp = ImportInfo(module="express", names=["express"], is_relative=False)
-        result = imports_handler._resolve_import_path("lib/index.ts", imp, file_index)
+        result = imports_handler._resolve_import_path("lib/index.ts", imp)
         assert result is None
 
     def test_resolve_ts_scoped_external(
@@ -281,9 +297,9 @@ class TestResolveTsExternal:
         parse_data: list[FileParseData],
         file_index: dict[str, str],
     ) -> None:
-        imports_handler = Imports(graph, parse_data)
+        imports_handler = Imports(graph, parse_data, file_index)
         imp = ImportInfo(module="@types/node", names=[], is_relative=False)
-        result = imports_handler._resolve_import_path("lib/index.ts", imp, file_index)
+        result = imports_handler._resolve_import_path("lib/index.ts", imp)
         assert result is None
 
 
@@ -406,6 +422,7 @@ class TestProcessImportsNoDuplicates:
         self,
         graph: KnowledgeGraph,
         parse_data: list[FileParseData],
+        file_index: dict[str, str],
     ) -> None:
         """
         Duplicates are also prevented across separate FileParseData entries.
@@ -413,7 +430,7 @@ class TestProcessImportsNoDuplicates:
         for the same file (e.g. if the same file appears twice).
         """
 
-        imports_handler = Imports(graph, parse_data)
+        imports_handler = Imports(graph, parse_data, file_index)
         imports_handler.process_imports()
 
         imports_rels = graph.get_relationships_by_type(RelType.IMPORTS)

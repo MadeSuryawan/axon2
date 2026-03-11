@@ -213,7 +213,7 @@ class Watcher:
                 reindexed_paths.add(relative)
 
         if entries:
-            reindex_files(entries, self._repo_path, self._storage)
+            reindex_files(entries, self._storage, rebuild_fts=False)
 
         return len(entries), reindexed_paths
 
