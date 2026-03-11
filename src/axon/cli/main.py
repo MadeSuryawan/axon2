@@ -13,7 +13,7 @@ from rich.logging import RichHandler
 from rich.traceback import install
 from typer import Argument, Exit, Option, Typer, confirm
 
-from axon.cli.startup import (
+from axon.cli.helpers.db_check import (
     _FALSE,
     check_meta_json,
     get_kuzu,
