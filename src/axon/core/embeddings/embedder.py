@@ -61,9 +61,7 @@ def embed_graph(
         each carrying the node's ID and its embedding vector as a plain
         Python ``list[float]``.
     """
-    nodes = [n for n in graph.iter_nodes() if n.label in EMBEDDABLE_LABELS]
-
-    if not nodes:
+    if not (nodes := [n for n in graph.iter_nodes() if n.label in EMBEDDABLE_LABELS]):
         return []
 
     class_method_idx = build_class_method_index(graph)
@@ -71,16 +69,10 @@ def embed_graph(
 
     vectors = list(get_model().embed(texts, batch_size=batch_size))
 
-    results: list[NodeEmbedding] = []
-    for node, vector in zip(nodes, vectors, strict=True):
-        results.append(
-            NodeEmbedding(
-                node_id=node.id,
-                embedding=vector.tolist(),
-            ),
-        )
-
-    return results
+    return [
+        NodeEmbedding(node_id=node.id, embedding=vector.tolist())
+        for node, vector in zip(nodes, vectors, strict=True)
+    ]
 
 
 def embed_nodes(

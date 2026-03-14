@@ -181,22 +181,26 @@ class Pipelines:
         self._result.symbols = sum(1 for n in self._graph.iter_nodes() if n.label in _SYMBOL_LABELS)
         self._result.relationships = self._graph.relationship_count
 
-        if self._storage:
-            rprint("\n[b blue]4 Stages loading to storage...")
-            self._storage.bulk_load(self._graph)
-            if self._embeddings:
-                try:
-                    rprint("\n[b blue]Generating embeddings...")
-                    node_embeddings = embed_graph(self._graph)
-                    self._storage.store_embeddings(node_embeddings)
-                    self._result.embeddings = len(node_embeddings)
-                except (RuntimeError, ValueError, OSError, SystemError):
-                    logger.warning(
-                        "Embedding phase failed — search will use FTS only",
-                        exc_info=True,
-                    )
-                return
+        if not self._storage:
+            return
+
+        rprint("\n[b blue]4 Stages loading to storage...")
+        self._storage.bulk_load(self._graph)
+
+        if not self._embeddings:
             rprint("\n[b yellow]Embedding disabled — search will use FTS only")
+            return
+
+        try:
+            rprint("\n[b blue]Generating embeddings...")
+            node_embeddings = embed_graph(self._graph)
+            self._storage.store_embeddings(node_embeddings)
+            self._result.embeddings = len(node_embeddings)
+        except (RuntimeError, ValueError, OSError, SystemError):
+            logger.warning(
+                "Embedding phase failed — search will use FTS only",
+                exc_info=True,
+            )
 
     def build_graph(self) -> KnowledgeGraph:
         """

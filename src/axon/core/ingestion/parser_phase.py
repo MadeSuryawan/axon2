@@ -10,9 +10,11 @@ The main entry point is :meth:`Parsing.process_parsing`, which parses files
 in parallel, extracts symbols, and populates the knowledge graph.
 """
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor as TPool
 from dataclasses import dataclass
 from logging import getLogger
+from threading import Lock
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import (
@@ -110,6 +112,7 @@ class Parsing:
         self._max_workers = max_workers
         # Parser cache: maps language -> parser instance
         self._parser_cache: dict[str, LanguageParser] = {}
+        self._parser_cache_lock = Lock()
 
     def process_parsing(
         self,
@@ -221,16 +224,25 @@ class Parsing:
             ValueError: If *language* is not supported.
         """
         # Return cached parser if available
-        cached = self._parser_cache.get(language)
-        if cached is not None:
+        if cached := self._parser_cache.get(language):
             return cached
-
-        # Create new parser based on language
-        parser = self._create_parser(language)
-
-        # Cache the parser for future use
-        self._parser_cache[language] = parser
+        with self._parser_cache_lock:
+            if cached := self._parser_cache.get(language):
+                return cached
+            # Create new parser based on language
+            parser = self._create_parser(language)
+            # Cache the parser for future use
+            self._parser_cache[language] = parser
         return parser
+
+    def _lang_parsers(self) -> dict[str, Callable[[], LanguageParser]]:
+        """Return a mapping of language -> parser instance."""
+        return {
+            "python": PythonParser,
+            "typescript": lambda: TypeScriptParser(dialect="typescript"),
+            "javascript": lambda: TypeScriptParser(dialect="javascript"),
+            "tsx": lambda: TypeScriptParser(dialect="tsx"),
+        }
 
     def _create_parser(self, language: str) -> LanguageParser:
         """
@@ -245,12 +257,8 @@ class Parsing:
         Raises:
             ValueError: If the language is not supported.
         """
-        if language == "python":
-            return PythonParser()
-        if language == "typescript":
-            return TypeScriptParser(dialect="typescript")
-        if language == "javascript":
-            return TypeScriptParser(dialect="javascript")
+        if factory := self._lang_parsers().get(language):
+            return factory()
 
         # Unsupported language - raise error with helpful message
         details = (
