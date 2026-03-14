@@ -21,15 +21,17 @@ Phases executed:
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from json import dump, load
 from logging import getLogger
 from pathlib import Path
 from time import monotonic
 from typing import Any
 
 from rich import print as rprint
+from xxhash import xxh64
 
 from axon.config.ignore import load_gitignore
-from axon.core.embeddings.embedder import embed_graph
+from axon.core.embeddings.embedder import EMBEDDABLE_LABELS, embed_graph
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphRelationship, NodeLabel
 from axon.core.ingestion.calls import Calls
@@ -44,7 +46,7 @@ from axon.core.ingestion.structure import Structure
 from axon.core.ingestion.symbol_lookup import build_name_index
 from axon.core.ingestion.types import process_types
 from axon.core.ingestion.walker import FileEntry, walk_repo
-from axon.core.storage.base import StorageBackend
+from axon.core.storage.base import NodeEmbedding, StorageBackend
 
 logger = getLogger(__name__)
 
@@ -104,6 +106,8 @@ class Pipelines:
         self._graph = KnowledgeGraph()
         self._result = PipelineResult()
         self._parsed_data: list[FileParseData] = []
+        self._embeddings_file = self._repo_path / ".axon" / "embeddings.json"
+        self._saved_embeddings: dict | None = None
 
     @property
     def graph(self) -> KnowledgeGraph:
@@ -191,16 +195,114 @@ class Pipelines:
             rprint("\n[b yellow]Embedding disabled — search will use FTS only")
             return
 
+        # Try to load cached embeddings, otherwise generate new ones
+        if self._is_embeddings_valid_for_graph():
+            rprint("\n[b blue]Using cached embeddings...")
+            node_embeddings = self._load_saved_embeddings()
+        else:
+            node_embeddings = self._generate_new_embeddings()
+
+        self._storage.store_embeddings(node_embeddings)
+        self._result.embeddings = len(node_embeddings)
+
+    def _is_embeddings_valid_for_graph(self) -> bool:
+        """Check if saved embeddings match the current graph and cache the data."""
+        if not self._embeddings_file.exists():
+            return False
+
+        self._saved_embeddings = self._load_embeddings_from_file()
+
+        # Get embeddable nodes from current graph
+        embeddable_nodes = [n for n in self._graph.iter_nodes() if n.label in EMBEDDABLE_LABELS]
+        embeddable_node_ids = {n.id for n in embeddable_nodes}
+        saved_node_ids = {e["node_id"] for e in self._saved_embeddings["embeddings"]}
+
+        # Check 1: Node IDs must match
+        if embeddable_node_ids != saved_node_ids:
+            rprint(
+                f"[b yellow]Node mismatch: saved={len(saved_node_ids)}, current={len(embeddable_node_ids)}[/b yellow]",
+            )
+            self._saved_embeddings = None
+            return False
+
+        # Check 2: Content hash must match (detect modified code)
+        current_hash = self._compute_content_hash(embeddable_nodes)
+        saved_hash = self._saved_embeddings.get("graph_hash")
+
+        if current_hash != saved_hash:
+            rprint("\n[b yellow]Content changed since last embedding - regenerating...[/b yellow]")
+            self._saved_embeddings = None
+            self._embeddings_file.unlink(missing_ok=True)
+            return False
+
+        return True
+
+    def _compute_content_hash(self, nodes: list) -> str:
+        """Compute hash based on node content, signature, and file_path to detect modifications."""
+        hasher = xxh64()
+        for n in sorted(nodes, key=lambda x: x.id):
+            hasher.update(f"{n.id}:{n.content}:{n.signature}:{n.file_path}".encode())
+        return hasher.hexdigest()[:16]
+
+    def _load_embeddings_from_file(self) -> dict[str, Any]:
+        """Load embeddings from file."""
+        # Load data once and cache for reuse in _load_embeddings_from_file
         try:
-            rprint("\n[b blue]Generating embeddings...")
+            with open(self._embeddings_file) as f:
+                return load(f)
+        except FileNotFoundError:
+            return {}
+        except Exception:
+            logger.exception("Error loading embeddings from file")
+            return {}
+
+    def _load_saved_embeddings(self) -> list[NodeEmbedding]:
+        """Load cached embeddings from memory (must call _is_embeddings_valid_for_graph first)."""
+        if not self._saved_embeddings:
+            details = "Embeddings not validated. Call _is_embeddings_valid_for_graph() first."
+            raise RuntimeError(details)
+        return [
+            NodeEmbedding(node_id=item["node_id"], embedding=item["embedding"])
+            for item in self._saved_embeddings["embeddings"]
+        ]
+
+    def _save_embeddings_to_file(self, embeddings: list[NodeEmbedding]) -> None:
+        """Save embeddings along with content-based hash for validation."""
+        embeddable_nodes = [n for n in self._graph.iter_nodes() if n.label in EMBEDDABLE_LABELS]
+        # Use content-based hash (detects code modifications)
+        graph_hash = self._compute_content_hash(embeddable_nodes)
+
+        data = {
+            "graph_hash": graph_hash,
+            "node_count": len(embeddable_nodes),
+            "embeddings": [
+                {"node_id": emb.node_id, "embedding": emb.embedding} for emb in embeddings
+            ],
+        }
+
+        self._embeddings_file.parent.mkdir(parents=True, exist_ok=True)
+        self._write_embeddings_to_file(data)
+
+    def _write_embeddings_to_file(self, data: dict[str, Any]) -> None:
+        try:
+            with open(self._embeddings_file, "w") as f:
+                dump(data, f)
+        except Exception:
+            logger.exception("Error saving embeddings to file")
+
+    def _generate_new_embeddings(self) -> list[NodeEmbedding]:
+        """Generate new embeddings and save them to file."""
+        rprint("\n[b blue]Generating new embeddings...")
+        try:
             node_embeddings = embed_graph(self._graph)
-            self._storage.store_embeddings(node_embeddings)
-            self._result.embeddings = len(node_embeddings)
+            self._save_embeddings_to_file(node_embeddings)
         except (RuntimeError, ValueError, OSError, SystemError):
             logger.warning(
                 "Embedding phase failed — search will use FTS only",
                 exc_info=True,
             )
+            return []
+        return node_embeddings
 
     def build_graph(self) -> KnowledgeGraph:
         """
@@ -268,11 +370,11 @@ def _collect_saved_edges(
     file_entries: list[FileEntry],
 ) -> list[GraphRelationship]:
 
-    saved_edges = []
-    for fp in changed_files:
-        saved_edges.extend(
-            storage.get_inbound_cross_file_edges(fp, exclude_source_files=changed_files),
-        )
+    saved_edges = [
+        rel
+        for fp in changed_files
+        for rel in storage.get_inbound_cross_file_edges(fp, exclude_source_files=changed_files)
+    ]
 
     for entry in file_entries:
         storage.remove_nodes_by_file(entry.path)

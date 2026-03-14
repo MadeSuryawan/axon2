@@ -21,6 +21,7 @@ from time import sleep
 from typing import Any
 
 from kuzu import Connection, Database, QueryResult
+from rich import print as rprint
 
 from axon.config.progress_bar import p_bar, reset_pbar, tqdm
 from axon.core.graph.graph import KnowledgeGraph
@@ -142,7 +143,7 @@ class KuzuBackend:
         Returns:
             The active Connection instance.
         """
-        if self._conn is None:
+        if not self._conn:
             details = "KuzuBackend.initialize() must be called before use"
             raise RuntimeError(details)
         return self._conn
@@ -690,12 +691,13 @@ class KuzuBackend:
         """
         conn = self._ensure_initialized()
         if not embeddings:
+            rprint("\n[b blue]No embeddings to store")
             return
 
         if self._bulk_store_embeddings_csv(embeddings):
+            rprint("\n[b blue]Embeddings stored via CSV COPY")
             return
 
-        logger.info("\nStoring embeddings via individual MERGE")
         for emb in embeddings:
             try:
                 conn.execute(
@@ -704,7 +706,7 @@ class KuzuBackend:
                 )
             except RuntimeError:
                 logger.debug("store_embeddings failed for node %s", emb.node_id, exc_info=True)
-        logger.info("Embeddings stored")
+        rprint("\n[b blue]Embeddings stored via individual MERGE")
 
     def _fetch_node_metadata(self, node_ids: list[str]) -> dict[str, GraphNode]:
         """Fetch node metadata in batches across tables."""
