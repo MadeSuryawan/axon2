@@ -25,7 +25,7 @@ from axon.core.storage.base import NodeEmbedding
 
 @lru_cache(maxsize=4)
 def get_model() -> TextEmbedding:
-
+    """Return a cached TextEmbedding model instance."""
     return TextEmbedding(model_name=MODEL_NAME)
 
 
@@ -41,6 +41,18 @@ EMBEDDABLE_LABELS: frozenset[NodeLabel] = frozenset(
         NodeLabel.ENUM,
     },
 )
+
+
+def embed_query(query: str) -> list[float] | None:
+    """Embed a single query string, returning ``None`` on failure."""
+    if not query or not query.strip():
+        return
+
+    try:
+        model = get_model()
+        return list(next(iter(model.embed([query]))))
+    except (RuntimeError, ConnectionError, SystemError, OSError, TimeoutError):
+        return
 
 
 def embed_graph(
@@ -96,23 +108,14 @@ def embed_nodes(
     if not node_ids:
         return []
 
-    nodes = [graph.get_node(nid) for nid in node_ids]
-    nodes = [n for n in nodes if n is not None and n.label in EMBEDDABLE_LABELS]
-
-    if not nodes:
+    g_nodes = [graph.get_node(nid) for nid in node_ids]
+    if not (nodes := [n for n in g_nodes if n is not None and n.label in EMBEDDABLE_LABELS]):
         return []
 
     class_method_idx = build_class_method_index(graph)
-    model = get_model()
 
     texts = [generate_text(n, graph, class_method_idx) for n in nodes]
-    embeddings: list[NodeEmbedding] = []
-    for node, vector in zip(nodes, model.embed(texts, batch_size=batch_size), strict=True):
-        embeddings.append(
-            NodeEmbedding(
-                node_id=node.id,
-                embedding=vector.tolist(),
-            ),
-        )
-
-    return embeddings
+    return [
+        NodeEmbedding(node_id=node.id, embedding=vector.tolist())
+        for node, vector in zip(nodes, _embed_texts(texts, batch_size), strict=True)
+    ]

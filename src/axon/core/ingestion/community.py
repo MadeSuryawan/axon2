@@ -41,6 +41,14 @@ class Community:
         NodeLabel.CLASS,
     )
 
+    _HERITAGE_EDGE_TYPES: tuple[RelType, ...] = (
+        RelType.EXTENDS,
+        RelType.IMPLEMENTS,
+        RelType.USES_TYPE,
+    )
+    _CALLS_WEIGHT = 1.0
+    _HERITAGE_WEIGHT = 0.5
+
     def __init__(
         self,
         graph: KnowledgeGraph,
@@ -79,6 +87,164 @@ class Community:
 
         partition = find_partition(ig_graph, ModularityVertexPartition)
         return self._process_partition(partition, index_to_node_id)
+
+    def export_to_igraph(self) -> tuple[Graph, dict[int, str]]:
+        """
+        Extract the call + heritage graph and build an igraph representation.
+
+        This method combines callable nodes (Function, Method, Class) from the
+        knowledge graph with weighted edges representing both CALLS relationships
+        (weight=1.0) and heritage relationships (EXTENDS, IMPLEMENTS, USES_TYPE)
+        with weight=0.5. The heritage edges have lower weight to influence
+        community structure without dominating over direct call relationships.
+
+        The igraph is built with directed edges and includes edge weights for
+        use in community detection algorithms that consider edge strength.
+
+        Args:
+            self: The Community instance containing the knowledge graph.
+
+        Returns:
+            A tuple containing:
+                - Graph: The igraph representation of the combined call
+                  and heritage graph.
+                - dict[int, str]: Mapping from igraph vertex indices to Axon
+                  node IDs for later reference.
+
+        Raises:
+            KeyError: If a relationship references a node not in the callable
+                set (should not occur in well-formed graphs).
+            ValueError: If the graph contains invalid relationship data.
+        """
+        # Step 1: Map all callable nodes (Function, Method, Class) to integer indices.
+        # This creates a bidirectional mapping between Axon node IDs and igraph indices.
+        node_id_to_index, index_to_node_id = self._map_callable_nodes_to_indices()
+
+        # Step 2: Extract all edges with their weights from the knowledge graph.
+        # CALLS edges get weight 1.0 (full strength), heritage edges get 0.5.
+        edge_list, edge_weights = self._extract_weighted_edges(node_id_to_index)
+
+        # Step 3: Construct the igraph with vertices, edges, and weights.
+        # The graph is directed to preserve caller/callee relationships.
+        ig_graph = self._build_igraph(node_id_to_index, edge_list, edge_weights)
+
+        return ig_graph, index_to_node_id
+
+    def _map_callable_nodes_to_indices(
+        self,
+    ) -> tuple[dict[str, int], dict[int, str]]:
+        """
+        Map all callable nodes to integer indices for igraph vertex mapping.
+
+        Iterates through all callable node labels (Function, Method, Class) and
+        assigns each unique node a sequential integer index. Maintains bidirectional
+        mappings for forward construction and reverse lookup.
+
+        Returns:
+            A tuple containing:
+                - dict[str, int]: Mapping from Axon node ID to igraph vertex index.
+                - dict[int, str]: Mapping from igraph vertex index to Axon node ID.
+
+        Note:
+            The index assignment follows the order of NodeLabel iteration,
+            then insertion order within each label type.
+        """
+        node_id_to_index: dict[str, int] = {}
+        index_to_node_id: dict[int, str] = {}
+
+        for label in self._CALLABLE_LABELS:
+            for node in self._graph.get_nodes_by_label(label):
+                idx = len(node_id_to_index)
+                node_id_to_index[node.id] = idx
+                index_to_node_id[idx] = node.id
+
+        return node_id_to_index, index_to_node_id
+
+    def _extract_weighted_edges(
+        self,
+        node_id_to_index: dict[str, int],
+    ) -> tuple[list[tuple[int, int]], list[float]]:
+        """
+        Extract all relationships from the graph and convert to indexed edges with weights.
+
+        Processes CALLS relationships first (higher weight), then iterates through
+        heritage relationship types (EXTENDS, IMPLEMENTS, USES_TYPE) with lower weight.
+        Only includes edges where both source and target nodes exist in the callable set.
+
+        Args:
+            node_id_to_index: Mapping from Axon node IDs to igraph indices.
+
+        Returns:
+            A tuple containing:
+                - list[tuple[int, int]]: List of (source_index, target_index) edge tuples.
+                - list[float]: Corresponding edge weights matching edge_list order.
+
+        Note:
+            The conditional check `src_idx is not None and tgt_idx is not None`
+            filters out edges to/from nodes that are not callable (e.g., variables,
+            parameters, or imported modules).
+        """
+        edge_list: list[tuple[int, int]] = []
+        edge_weights: list[float] = []
+
+        # Process CALLS relationships with full weight (1.0).
+        # These represent direct function/method invocations.
+        for rel in self._graph.get_relationships_by_type(RelType.CALLS):
+            src_idx = node_id_to_index.get(rel.source)
+            tgt_idx = node_id_to_index.get(rel.target)
+            # Only include edge if both endpoints are callable nodes.
+            if src_idx is not None and tgt_idx is not None:
+                edge_list.append((src_idx, tgt_idx))
+                edge_weights.append(self._CALLS_WEIGHT)
+
+        # Process heritage relationships with reduced weight (0.5).
+        # Lower weight ensures call relationships dominate community formation.
+        for rel_type in self._HERITAGE_EDGE_TYPES:
+            for rel in self._graph.get_relationships_by_type(rel_type):
+                src_idx = node_id_to_index.get(rel.source)
+                tgt_idx = node_id_to_index.get(rel.target)
+                # Only include edge if both endpoints are callable nodes.
+                if src_idx is not None and tgt_idx is not None:
+                    edge_list.append((src_idx, tgt_idx))
+                    edge_weights.append(self._HERITAGE_WEIGHT)
+
+        return edge_list, edge_weights
+
+    def _build_igraph(
+        self,
+        node_id_to_index: dict[str, int],
+        edge_list: list[tuple[int, int]],
+        edge_weights: list[float],
+    ) -> Graph:
+        """
+        Construct an igraph from vertex and edge mappings.
+
+        Creates a directed igraph with the specified number of vertices and edges.
+        Edge weights are optionally attached to the graph's edge sequence if provided.
+
+        Args:
+            node_id_to_index: Mapping from node IDs to indices (used only for count).
+            edge_list: List of (source_index, target_index) tuples.
+            edge_weights: List of edge weights corresponding to edge_list.
+
+        Returns:
+            Graph: The constructed igraph with vertices, edges, and optional weights.
+
+        Note:
+            The weight attribute is only set if edge_weights is non-empty to avoid
+            igraph warnings about empty attribute assignment.
+        """
+        num_vertices = len(node_id_to_index)
+
+        ig_graph = Graph(directed=True)
+        ig_graph.add_vertices(num_vertices)
+        ig_graph.add_edges(edge_list)
+
+        # Only assign weights if we have edges; avoids empty attribute issues.
+        if edge_weights:
+            ig_graph.es["weight"] = edge_weights
+
+        return ig_graph
 
     def _is_graph_size_sufficient(self, ig_graph: Graph) -> bool:
         """Check if the igraph object has enough vertices for clustering."""
@@ -305,10 +471,12 @@ class Community:
         directories: list[str] = []
         for nid in member_ids:
             node = graph.get_node(nid)
-            if node is not None and node.file_path:
-                parent = PurePosixPath(node.file_path).parent.name
-                if parent:
-                    directories.append(parent)
+            if (
+                node is not None
+                and node.file_path
+                and (parent := PurePosixPath(node.file_path).parent.name)
+            ):
+                directories.append(parent)
         return directories
 
     def _compute_label_from_directories(self, directories: list[str]) -> str:

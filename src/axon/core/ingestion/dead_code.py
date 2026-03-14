@@ -9,6 +9,7 @@ setting ``is_dead = True`` on the corresponding graph node.
 
 from collections import defaultdict
 from logging import getLogger
+from pathlib import PurePosixPath
 from typing import cast
 
 from axon.core.graph.graph import KnowledgeGraph
@@ -203,7 +204,13 @@ class DeadCode:
 
     def _is_test_file(self, file_path: str) -> bool:
         """Return ``True`` if the file is in a test directory or is a test file."""
-        return "/tests/" in file_path or "/test_" in file_path or file_path.endswith("conftest.py")
+        parts = PurePosixPath(file_path).parts
+        return (
+            "tests" in parts
+            or "test" in parts
+            or any(p.startswith("test_") for p in parts)
+            or file_path.endswith("conftest.py")
+        )
 
     def _is_dunder(self, name: str) -> bool:
         """Return ``True`` if *name* is a dunder (double-underscore) method."""
