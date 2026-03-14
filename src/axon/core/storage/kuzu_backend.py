@@ -694,15 +694,18 @@ class KuzuBackend:
 
         if self._bulk_store_embeddings_csv(embeddings):
             return
+        with p_bar(desc="Storing embeddings", total=len(embeddings)) as pbar:
+            for emb in embeddings:
+                try:
+                    conn.execute(
+                        "MERGE (e:Embedding {node_id: $nid}) SET e.vec = $vec",
+                        parameters={"nid": emb.node_id, "vec": emb.embedding},
+                    )
+                    pbar.update()
+                except RuntimeError:
+                    logger.debug("store_embeddings failed for node %s", emb.node_id, exc_info=True)
 
-        for emb in embeddings:
-            try:
-                conn.execute(
-                    "MERGE (e:Embedding {node_id: $nid}) SET e.vec = $vec",
-                    parameters={"nid": emb.node_id, "vec": emb.embedding},
-                )
-            except RuntimeError:
-                logger.debug("store_embeddings failed for node %s", emb.node_id, exc_info=True)
+            pbar.set_description_str("Completed")
 
     def _fetch_node_metadata(self, node_ids: list[str]) -> dict[str, GraphNode]:
         """Fetch node metadata in batches across tables."""

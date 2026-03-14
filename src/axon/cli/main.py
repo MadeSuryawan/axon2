@@ -3,7 +3,7 @@
 from asyncio import run as asyncio_run
 from contextlib import suppress
 from json import dumps, loads
-from logging import basicConfig, getLogger
+from logging import ERROR, WARNING, basicConfig, getLogger
 from pathlib import Path
 from shutil import rmtree
 from sys import platform
@@ -51,6 +51,11 @@ basicConfig(
     handlers=[RichHandler(rich_tracebacks=True)],
 )
 logger = getLogger("rich")
+getLogger("httpcore").setLevel(ERROR)
+getLogger("httpx").setLevel(ERROR)
+getLogger("fastembed").setLevel(WARNING)
+getLogger("filelock").setLevel(WARNING)
+getLogger("pygments").setLevel(WARNING)
 install()
 
 

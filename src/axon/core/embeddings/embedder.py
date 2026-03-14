@@ -13,8 +13,10 @@ richness that makes embedding worthwhile.
 from functools import lru_cache
 
 from fastembed import TextEmbedding
+from fastembed.common.types import NumpyArray
 
 from axon.config.constants import MODEL_NAME
+from axon.config.progress_bar import p_bar
 from axon.core.embeddings.text import build_class_method_index, generate_text
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import NodeLabel
@@ -67,12 +69,22 @@ def embed_graph(
     class_method_idx = build_class_method_index(graph)
     texts = [generate_text(node, graph, class_method_idx) for node in nodes]
 
-    vectors = list(get_model().embed(texts, batch_size=batch_size))
-
     return [
         NodeEmbedding(node_id=node.id, embedding=vector.tolist())
-        for node, vector in zip(nodes, vectors, strict=True)
+        for node, vector in zip(nodes, _embed_texts(texts, batch_size), strict=True)
     ]
+
+
+def _embed_texts(texts: list[str], batch_size: int) -> list[NumpyArray]:
+    """Embed a list of texts using fastembed's TextEmbedding model."""
+    model = get_model()
+    vectors = []
+    with p_bar(desc="Embedding", total=len(texts)) as pbar:
+        for vector in model.embed(texts, batch_size=batch_size):
+            vectors.append(vector)
+            pbar.update()
+        pbar.set_description_str("Completed")
+    return vectors
 
 
 def embed_nodes(
