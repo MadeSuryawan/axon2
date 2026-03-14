@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+/* =============================================
+   AXON DESIGN SYSTEM
+   Terminal-inspired, data-dense, monospace
+   Spec: docs/frontend-spec.md section 3
+   ============================================= */
+
+/* --- Color Tokens (spec 3.2) --- */
+:root {
+  /* Backgrounds */
+  --bg-primary: #0a0e14;
+  --bg-surface: #131820;
+  --bg-elevated: #1a2030;
+  --bg-hover: #1e2a3a;
+  --bg-active: #0d2818;
+
+  /* Borders */
+  --border: #1e2530;
+  --border-focus: #39d353;
+  --border-muted: #151b24;
+
+  /* Text */
+  --text-primary: #c5ced6;
+  --text-secondary: #6b7d8e;
+  --text-bright: #e6edf3;
+  --text-dimmed: #3d4f5f;
+
+  /* Accent — Terminal Green */
+  --accent: #39d353;
+  --accent-dim: #1a4d2e;
+  --accent-muted: #238636;
+
+  /* Semantic */
+  --info: #58a6ff;
+  --warning: #e5a839;
+  --danger: #f85149;
+  --purple: #a371f7;
+  --cyan: #3fb8af;
+  --orange: #f0883e;
+  --yellow: #d4a72c;
+
+  /* Graph Node Colors — matches graphAdapter.ts palette */
+  --node-function: #39D353;
+  --node-class: #F5A623;
+  --node-method: #58A6FF;
+  --node-interface: #00BCD4;
+  --node-typealias: #B455E0;
+  --node-enum: #E85D75;
+  --node-file: #8B949E;
+  --node-folder: #D2A35C;
+  --node-community: #3FB950;
+  --node-process: #F78166;
+
+  /* Radius — terminal-sharp (spec 3.4) */
+  --radius: 2px;
+}
+
+/* --- Base Reset --- */
+* {
+  border-color: var(--border);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* --- Typography (spec 3.3) --- */
+h1, h2, h3 {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--text-bright);
+}
+
+/* --- Scrollbar Styling --- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dimmed);
+}
+
+/* --- Selection --- */
+::selection {
+  background: var(--accent-dim);
+  color: var(--text-bright);
+}
+
+/* --- Utility Classes --- */
+.section-heading {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-bright);
+}
+
+.view-title {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.tiny-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.badge-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+}
