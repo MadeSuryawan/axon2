@@ -7,7 +7,9 @@ separate node table, and a single ``CodeRelation`` relationship table group
 covers all source-to-target combinations.
 """
 
+import asyncio
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import suppress
 from csv import writer as csv_writer
 from hashlib import sha256
@@ -20,7 +22,7 @@ from threading import Lock
 from time import sleep
 from typing import Any
 
-from kuzu import Connection, Database, QueryResult
+from kuzu import AsyncConnection, Connection, Database, QueryResult
 from rich import print as rprint
 
 from axon.config.progress_bar import p_bar, reset_pbar, tqdm
@@ -589,44 +591,113 @@ class KuzuBackend:
                 with self._lock:
                     result = conn.execute(cypher)
 
-                if not isinstance(result, QueryResult):
-                    continue
-                while result.has_next():
-                    if not isinstance((row := result.get_next()), list):
-                        continue
-                    node_id = row[0] or ""
-                    name = row[1] or ""
-                    file_path = row[2] or ""
-                    content = row[3] or ""
-                    signature = row[4] or ""
-                    bm25_score = float(row[5]) if row[5] is not None else 0.0
-
-                    if "/tests/" in file_path or "/test_" in file_path:
-                        bm25_score *= 0.5
-
-                    label_prefix = node_id.split(":", 1)[0] if node_id else ""
-
-                    # Boost top-level definitions in source files.
-                    if label_prefix in ("function", "class") and "/tests/" not in file_path:
-                        bm25_score *= 1.2
-
-                    snippet = content[:200] if content else signature[:200]
-
-                    candidates.append(
-                        SearchResult(
-                            node_id=node_id,
-                            score=bm25_score,
-                            node_name=name,
-                            file_path=file_path,
-                            label=label_prefix,
-                            snippet=snippet,
-                        ),
-                    )
+                candidates.extend(self._parse_fts_result(result))
             except RuntimeError:
                 logger.debug("fts_search failed on table %s", table, exc_info=True)
 
-        candidates.sort(key=lambda r: (-r.score, r.node_id))
-        return candidates[:limit]
+        return sorted(candidates, key=lambda r: (-r.score, r.node_id))[:limit]
+
+    def _parse_fts_result(
+        self,
+        result: QueryResult | list[QueryResult] | None,
+    ) -> list[SearchResult]:
+        """
+        Parse FTS query result rows into SearchResult list.
+
+        Common helper for both sync and async FTS search methods.
+
+        Args:
+            result: The QueryResult from a FTS query.
+
+        Returns:
+            List of SearchResult objects.
+        """
+        candidates: list[SearchResult] = []
+        if not isinstance(result, QueryResult):
+            return candidates
+
+        while result.has_next():
+            row = result.get_next()
+            if not isinstance(row, list):
+                continue
+
+            node_id = row[0] or ""
+            name = row[1] or ""
+            file_path = row[2] or ""
+            content = row[3] or ""
+            signature = row[4] or ""
+            bm25_score = float(row[5]) if row[5] is not None else 0.0
+
+            if "/tests/" in file_path or "/test_" in file_path:
+                bm25_score *= 0.5
+
+            label_prefix = node_id.split(":", 1)[0] if node_id else ""
+
+            # Boost top-level definitions in source files.
+            if label_prefix in ("function", "class") and "/tests/" not in file_path:
+                bm25_score *= 1.2
+
+            snippet = content[:200] if content else signature[:200]
+
+            candidates.append(
+                SearchResult(
+                    node_id=node_id,
+                    score=bm25_score,
+                    node_name=name,
+                    file_path=file_path,
+                    label=label_prefix,
+                    snippet=snippet,
+                ),
+            )
+
+        return candidates
+
+    async def fts_search_async(self, query: str, limit: int) -> list[SearchResult]:
+        """
+        Async BM25 full-text search using KuzuDB's native FTS extension.
+
+        Searches across all node tables using pre-built FTS indexes on
+        ``name``, ``content``, and ``signature`` fields. Results are
+        ranked by BM25 relevance score.
+
+        Uses AsyncConnection to query all tables in parallel for better
+        performance with high concurrency workloads.
+
+        Returns the top *limit* results sorted by score descending.
+        """
+        if not self._db:
+            details = "KuzuBackend.initialize() must be called before use"
+            logger.error(details)
+            raise RuntimeError(details)
+
+        # Use AsyncConnection with concurrent query support
+        conn = AsyncConnection(self._db, max_concurrent_queries=len(_SEARCHABLE_TABLES))
+        escaped_q = escape_cypher(query)
+
+        async def search_single_table(table: str) -> list[SearchResult]:
+            """Search a single table asynchronously."""
+            idx_name = f"{table.lower()}_fts"
+            cypher = (
+                f"CALL QUERY_FTS_INDEX('{table}', '{idx_name}', '{escaped_q}') "
+                f"RETURN node.id, node.name, node.file_path, node.content, "
+                f"node.signature, score "
+                f"ORDER BY score DESC LIMIT {limit}"
+            )
+            try:
+                result = await conn.execute(cypher)
+                return self._parse_fts_result(result)
+            except RuntimeError:
+                logger.debug("fts_search_async failed for table %s", table, exc_info=True)
+                return []
+
+        # Execute all table searches concurrently
+        results = await asyncio.gather(
+            *[search_single_table(table) for table in _SEARCHABLE_TABLES],
+        )
+
+        # Merge and sort results
+        all_candidates: list[SearchResult] = [item for sublist in results for item in sublist]
+        return sorted(all_candidates, key=lambda r: (-r.score, r.node_id))[:limit]
 
     def fuzzy_search(self, query: str, limit: int, max_distance: int = 2) -> list[SearchResult]:
         """
@@ -1086,29 +1157,52 @@ class KuzuBackend:
 
         return True
 
-    def rebuild_fts_indexes(self, pbar: tqdm | None = None) -> None:
+    def rebuild_fts_indexes(self, pbar: tqdm | None = None, max_workers: int = 4) -> None:
         """
         Drop and recreate all FTS indexes.
 
         Must be called after any bulk data change so the BM25 indexes
         reflect the current node contents.
+
+        Uses ThreadPoolExecutor to build FTS indexes in parallel for each table.
+        Each thread gets its own connection from the same Database for thread safety.
         """
-        conn = self._ensure_initialized()
+        self._ensure_initialized()
         if pbar:
             pbar = reset_pbar(pbar, self._table_count, "4. Rebuilding FTS indexes")
-        for table in _NODE_TABLE_NAMES:
-            idx_name = f"{table.lower()}_fts"
-            with suppress(Exception):
-                conn.execute(f"CALL DROP_FTS_INDEX('{table}', '{idx_name}')")
 
-            try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._build_index_for_table, table): table
+                for table in _NODE_TABLE_NAMES
+            }
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                    pbar.update() if pbar else None
+                except RuntimeError:
+                    logger.debug(f"FTS index rebuild failed for {futures[future]}", exc_info=True)
+
+    def _build_index_for_table(self, table: str) -> str:
+        """Build FTS index for a single table using a dedicated connection."""
+        # Each thread gets its own connection from the same Database
+        if not (db := self._db):
+            details = "Database not initialized"
+            raise RuntimeError(details)
+
+        conn = Connection(db)
+        try:
+            idx_name = f"{table.lower()}_fts"
+            with suppress(Exception), self._lock:
+                conn.execute(f"CALL DROP_FTS_INDEX('{table}', '{idx_name}')")
+            with self._lock:
                 conn.execute(
                     f"CALL CREATE_FTS_INDEX('{table}', '{idx_name}', "
                     f"['name', 'content', 'signature'])",
                 )
-                pbar.update() if pbar else None
-            except RuntimeError:
-                logger.debug(f"FTS index rebuild failed for {table}", exc_info=True)
+            return table
+        finally:
+            del conn  # Release connection
 
     def _bulk_store_embeddings_csv(self, embeddings: list[NodeEmbedding]) -> bool:
         """

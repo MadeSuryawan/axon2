@@ -220,9 +220,10 @@ class Pipelines:
         # Check 1: Node IDs must match
         if embeddable_node_ids != saved_node_ids:
             rprint(
-                f"[b yellow]Node mismatch: saved={len(saved_node_ids)}, current={len(embeddable_node_ids)}[/b yellow]",
+                f"\n[b yellow]Node mismatch: saved={len(saved_node_ids)}, current={len(embeddable_node_ids)}[/b yellow]",
             )
             self._saved_embeddings = None
+            self._embeddings_file.unlink(missing_ok=True)
             return False
 
         # Check 2: Content hash must match (detect modified code)
