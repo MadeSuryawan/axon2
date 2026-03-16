@@ -26,9 +26,9 @@ from axon.core.storage.base import NodeEmbedding
 @pytest.fixture(autouse=True)
 def _clear_model_cache() -> Generator:
     """Clear the lru_cache on get_model before each test so mocks work."""
-    get_model.cache_clear()
+    get_model.cache_clear()  # type: ignore[attr-defined]
     yield
-    get_model.cache_clear()
+    get_model.cache_clear()  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

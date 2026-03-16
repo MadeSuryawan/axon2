@@ -80,13 +80,17 @@ class Community:
         Returns:
             The number of community nodes created.
         """
-        ig_graph, index_to_node_id = self._export_to_igraph(self._graph)
+        ig_graph, index_to_node_id = self.export_to_igraph()
 
         if not self._is_graph_size_sufficient(ig_graph):
             return 0
 
-        partition = find_partition(ig_graph, ModularityVertexPartition)
-        return self._process_partition(partition, index_to_node_id)
+        weights: list[int] | None = None
+        if ig_graph.ecount() > 0 and "weight" in ig_graph.es.attributes():
+            weights = ig_graph.es["weight"]
+
+        partition = find_partition(ig_graph, ModularityVertexPartition, weights=weights)
+        return self._process_partition(ig_graph, partition, index_to_node_id)
 
     def export_to_igraph(self) -> tuple[Graph, dict[int, str]]:
         """
@@ -129,6 +133,64 @@ class Community:
         ig_graph = self._build_igraph(node_id_to_index, edge_list, edge_weights)
 
         return ig_graph, index_to_node_id
+
+    def _is_graph_size_sufficient(self, ig_graph: Graph) -> bool:
+        """Check if the igraph object has enough vertices for clustering."""
+        if ig_graph.vcount() < 3:
+            logger.debug(
+                "Call graph too small for community detection (%d nodes), skipping.",
+                ig_graph.vcount(),
+            )
+            return False
+        return True
+
+    def _process_partition(
+        self,
+        ig_graph: Graph,
+        partition: ModularityVertexPartition,
+        index_to_node_id: dict[int, str],
+    ) -> int:
+        """
+        Process the graph partition, extract and store valid communities.
+
+        Args:
+            ig_graph: The igraph representation of the combined call and heritage graph.
+            partition: The vertex partition from leidenalg.
+            index_to_node_id: Mapping connecting igraph vertex indices back to Axon node IDs.
+
+        Returns:
+            The number of community nodes created.
+        """
+        community_count = 0
+
+        for i, members in enumerate(partition):
+            member_indices = cast(list[int], members)
+            if len(member_indices) < self._min_community_size:
+                continue
+
+            member_ids = [index_to_node_id[idx] for idx in member_indices]
+
+            subgraph = ig_graph.induced_subgraph(members)
+            n_members = len(members)
+            max_edges = n_members * (n_members - 1)
+            density = subgraph.ecount() / max_edges if max_edges > 0 else 0.0
+
+            self._store_community(i, member_ids, density)
+            community_count += 1
+
+            # logger.info(
+            #     "Community %d: %r with %d members (modularity=%.3f)",
+            #     i,
+            #     self._generate_label(self._graph, member_ids),
+            #     len(member_indices),
+            #     modularity_score,
+            # )
+
+        logger.info(
+            "Community detection complete: %d communities created.",
+            community_count,
+        )
+        return community_count
 
     def _map_callable_nodes_to_indices(
         self,
@@ -246,62 +308,11 @@ class Community:
 
         return ig_graph
 
-    def _is_graph_size_sufficient(self, ig_graph: Graph) -> bool:
-        """Check if the igraph object has enough vertices for clustering."""
-        if ig_graph.vcount() < 3:
-            logger.debug(
-                "Call graph too small for community detection (%d nodes), skipping.",
-                ig_graph.vcount(),
-            )
-            return False
-        return True
-
-    def _process_partition(
-        self,
-        partition: ModularityVertexPartition,
-        index_to_node_id: dict[int, str],
-    ) -> int:
-        """
-        Process the graph partition, extract and store valid communities.
-
-        Args:
-            partition: The vertex partition from leidenalg.
-            index_to_node_id: Mapping connecting igraph vertex indices back to Axon node IDs.
-
-        Returns:
-            The number of community nodes created.
-        """
-        community_count = 0
-        modularity_score = cast(float, partition.modularity)
-
-        for i, members in enumerate(partition):
-            member_indices = cast(list[int], members)
-            if len(member_indices) < self._min_community_size:
-                continue
-
-            member_ids = [index_to_node_id[idx] for idx in member_indices]
-            self._store_community(i, member_ids, modularity_score)
-            community_count += 1
-
-            # logger.info(
-            #     "Community %d: %r with %d members (modularity=%.3f)",
-            #     i,
-            #     self._generate_label(self._graph, member_ids),
-            #     len(member_indices),
-            #     modularity_score,
-            # )
-
-        logger.info(
-            "Community detection complete: %d communities created.",
-            community_count,
-        )
-        return community_count
-
     def _store_community(
         self,
         community_index: int,
         member_ids: list[str],
-        modularity_score: float,
+        density: float,
     ) -> None:
         """
         Store a single community in the knowledge graph.
@@ -309,7 +320,7 @@ class Community:
         Args:
             community_index: The index of the community (used for ID generation).
             member_ids: List of Axon node IDs that compose the community.
-            modularity_score: The cohesion score from the graph partition.
+            density: The density of the community.
         """
         community_id = generate_id(NodeLabel.COMMUNITY, f"community_{community_index}")
         label = self._generate_label(self._graph, member_ids)
@@ -317,7 +328,7 @@ class Community:
         self._create_community_node(
             community_id,
             label,
-            modularity_score,
+            density,
             len(member_ids),
         )
         self._create_member_relationships(community_id, member_ids)
@@ -326,16 +337,24 @@ class Community:
         self,
         community_id: str,
         label: str,
-        modularity_score: float,
+        density: float,
         symbol_count: int,
     ) -> None:
-        """Create and add the community node to the graph."""
+        """
+        Create and add the community node to the graph.
+
+        Args:
+            community_id: The ID of the community node.
+            label: The label of the community node.
+            density: The density of the community.
+            symbol_count: The number of symbols in the community.
+        """
         community_node = GraphNode(
             id=community_id,
             label=NodeLabel.COMMUNITY,
             name=label,
             properties={
-                "cohesion": modularity_score,
+                "cohesion": density,
                 "symbol_count": symbol_count,
             },
         )
@@ -357,79 +376,6 @@ class Community:
                     target=community_id,
                 ),
             )
-
-    def _export_to_igraph(
-        self,
-        graph: KnowledgeGraph,
-    ) -> tuple[Graph, dict[int, str]]:
-        """
-        Extract the call graph from *graph* and build an igraph representation.
-
-        Only Function, Method, and Class nodes are included. Only CALLS
-        relationships between those nodes are used as edges.
-
-        Args:
-            graph: The Axon knowledge graph.
-
-        Returns:
-            A tuple of ``(igraph_graph, vertex_index_to_node_id)`` where the
-            mapping connects igraph vertex indices back to Axon node IDs.
-        """
-        node_id_to_index, index_to_node_id = self._map_callable_nodes(graph)
-        edge_list = self._extract_call_edges(graph, node_id_to_index)
-
-        ig_graph = Graph(directed=True)
-        ig_graph.add_vertices(len(node_id_to_index))
-        ig_graph.add_edges(edge_list)
-
-        return ig_graph, index_to_node_id
-
-    def _map_callable_nodes(
-        self,
-        graph: KnowledgeGraph,
-    ) -> tuple[dict[str, int], dict[int, str]]:
-        """
-        Map graph nodes filtered by callable labels to integer indices.
-
-        Returns:
-            A tuple containing (node_id_to_index, index_to_node_id) dicts.
-        """
-        node_id_to_index: dict[str, int] = {}
-        index_to_node_id: dict[int, str] = {}
-
-        for label in self._CALLABLE_LABELS:
-            for node in graph.get_nodes_by_label(label):
-                idx = len(node_id_to_index)
-                node_id_to_index[node.id] = idx
-                index_to_node_id[idx] = node.id
-
-        return node_id_to_index, index_to_node_id
-
-    def _extract_call_edges(
-        self,
-        graph: KnowledgeGraph,
-        node_id_to_index: dict[str, int],
-    ) -> list[tuple[int, int]]:
-        """
-        Extract edges mapped to their corresponding integer indices.
-
-        Only includes CALLS relations between nodes that were previously mapped.
-
-        Args:
-            graph: The knowledge graph holding the relationships.
-            node_id_to_index: Index mapping for existing node IDs.
-
-        Returns:
-            A list of tuples representing edges (source index, target index).
-        """
-        edge_list: list[tuple[int, int]] = []
-        for rel in graph.get_relationships_by_type(RelType.CALLS):
-            src_idx = node_id_to_index.get(rel.source)
-            tgt_idx = node_id_to_index.get(rel.target)
-            if src_idx is not None and tgt_idx is not None:
-                edge_list.append((src_idx, tgt_idx))
-
-        return edge_list
 
     def _generate_label(self, graph: KnowledgeGraph, member_ids: list[str]) -> str:
         """
@@ -471,11 +417,7 @@ class Community:
         directories: list[str] = []
         for nid in member_ids:
             node = graph.get_node(nid)
-            if (
-                node is not None
-                and node.file_path
-                and (parent := PurePosixPath(node.file_path).parent.name)
-            ):
+            if node and node.file_path and (parent := PurePosixPath(node.file_path).parent.name):
                 directories.append(parent)
         return directories
 
@@ -492,10 +434,8 @@ class Community:
         counts = Counter(directories)
         most_common = counts.most_common(2)
 
-        if len(most_common) == 1 or most_common[0][0] == most_common[-1][0]:
-            # All members in the same directory.
+        if len(most_common) == 1:
             return most_common[0][0].capitalize()
 
-        # Mixed directories: combine top two.
         label = f"{most_common[0][0]}+{most_common[1][0]}"
         return label.capitalize()

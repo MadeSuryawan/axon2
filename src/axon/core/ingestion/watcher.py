@@ -16,11 +16,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from logging import getLogger
 from pathlib import Path
-from subprocess import CalledProcessError
+from subprocess import CalledProcessError, SubprocessError
 from subprocess import run as subprocess_run
 from time import monotonic
 from typing import Any, cast
 
+from rich import print as rprint
 from watchfiles import awatch
 
 from axon.config.ignore import load_gitignore, should_ignore
@@ -37,6 +38,16 @@ from axon.core.ingestion.walker import FileEntry, read_file
 from axon.core.storage.base import StorageBackend
 
 logger = getLogger(__name__)
+
+_SUBPROCESS_ERRORS = (
+    RuntimeError,
+    CalledProcessError,
+    FileNotFoundError,
+    OSError,
+    SystemError,
+    PermissionError,
+    SubprocessError,
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +76,8 @@ class Watcher:
     # How often watchfiles yields (controls quiet-period check granularity).
     _POLL_INTERVAL_MS = 500
 
+    _SMALL_CHANGE_THRESHOLD = 3
+
     def __init__(self, deps: WatcherDeps) -> None:
         self._repo_path = deps.repo_path
         self._storage = deps.storage
@@ -77,9 +90,9 @@ class Watcher:
         self._first_dirty_time: float = 0.0
         self._git_command = ["git", "rev-parse", "HEAD"]
         self._last_known_commit = self._get_head_sha()
-        self._changed_paths: list[Path] = []
         self._run_coupling = False
         self._ignored: set[str] = set()
+        self._small_change: bool = False
 
     def _get_head_sha(self) -> str | None:
         """Return the current git HEAD sha, or None if not in a git repo."""
@@ -94,7 +107,7 @@ class Watcher:
             )
             if result.returncode == 0:
                 return result.stdout.strip()
-        except (RuntimeError, CalledProcessError, FileNotFoundError):
+        except _SUBPROCESS_ERRORS:
             logger.debug("Failed to get git HEAD sha", exc_info=True)
         return None
 
@@ -106,44 +119,55 @@ class Watcher:
                 return await to_thread(fn)
         return await to_thread(fn)
 
-    async def watch(self) -> None:
-        """Watch loop — monitor files and re-index on changes."""
+    async def watch_repo(self) -> None:
+        """
+        Watch loop — monitor files and re-index on changes.
 
+        File-local reindex runs immediately on every change. Global phases
+        (communities, processes, dead code, embeddings) run after a quiet
+        period of QUIET_PERIOD seconds with no new changes. Coupling runs
+        only when new git commits are detected.
+        """
+
+        rprint(
+            f"[b blue]Watching [b magenta]{self._repo_path}[/b magenta] for changes. [white](Ctrl+C to stop)",
+        )
         async for changes in awatch(
             self._repo_path,
             rust_timeout=self._POLL_INTERVAL_MS,
             yield_on_timeout=True,
             stop_event=self._stop_event,
         ):
+            changed_paths: list[Path] = []
             seen: set[str] = set()
             for _, path_str in changes:
-                if path_str not in seen:
-                    seen.add(path_str)
-                    self._changed_paths.append(Path(path_str))
+                if path_str in seen:
+                    continue
+                seen.add(path_str)
+                changed_paths.append(Path(path_str))
 
             # --- Tier 1: Immediate file-local reindex ---
-            if self._changed_paths:
-                # Copy and clear to avoid accumulation and re-processing
-                batch = self._changed_paths.copy()
-                self._changed_paths.clear()
-                await self._reindex_changed_paths(batch)
+            if changed_paths:
+                await self._reindex_changed_paths(changed_paths)
 
             # --- Tier 2: Debounced global phases ---
             await self._debounce_global_phases()
 
         logger.info("Watch stopped.")
 
-    async def _reindex_changed_paths(self, paths: list[Path]) -> None:
+    async def _reindex_changed_paths(self, changed_paths: list[Path]) -> None:
         """Re-index changed paths through file-local phases."""
-        _index_result = await self._run_sync(lambda: self._reindex_files(paths))
-        _index_result = cast(tuple[int, set[str]], _index_result)
-        count, reindexed = _index_result
-        if reindexed:
-            self._dirty_files |= reindexed
-            self._last_change_time = monotonic()
-            if self._first_dirty_time == 0.0:
-                self._first_dirty_time = self._last_change_time
-            logger.info(f"Reindexed {count} file(s), {len(reindexed)} paths dirty")
+        _index_result = await self._run_sync(lambda: self._reindex_files(changed_paths))
+        count, reindexed = cast(tuple[int, set[str]], _index_result)
+
+        if not reindexed:
+            return
+
+        self._dirty_files |= reindexed
+        self._last_change_time = monotonic()
+        if self._first_dirty_time == 0.0:
+            self._first_dirty_time = self._last_change_time
+        logger.info(f"Reindexed {count} file(s), {len(reindexed)} paths dirty")
 
     async def _debounce_global_phases(self) -> None:
         """Run global phases after a quiet period."""
@@ -176,7 +200,7 @@ class Watcher:
                 self._dirty_files |= snapshot
                 self._last_change_time = monotonic()
 
-    def _reindex_files(self, paths: list[Path]) -> tuple[int, set[str]]:
+    def _reindex_files(self, changed_paths: list[Path]) -> tuple[int, set[str]]:
         """
         Re-index changed files through file-local phases.
 
@@ -186,7 +210,7 @@ class Watcher:
         entries: list[FileEntry] = []
         reindexed_paths: set[str] = set()
 
-        for abs_path in paths:
+        for abs_path in changed_paths:
             if not abs_path.is_file():
                 try:
                     relative = str(abs_path.relative_to(self._repo_path))
@@ -201,8 +225,7 @@ class Watcher:
             except ValueError:
                 continue
 
-            if relative in self._ignored or should_ignore(relative, self._gitignore):
-                self._ignored.add(relative)
+            if should_ignore(relative, self._gitignore):
                 continue
 
             if not is_supported(abs_path):
@@ -217,9 +240,7 @@ class Watcher:
 
         return len(entries), reindexed_paths
 
-    def _run_incremental_global_phases(
-        self,
-    ) -> None:
+    def _run_incremental_global_phases(self) -> None:
         """
         Run global phases incrementally using graph hydrated from storage.
 
@@ -241,30 +262,28 @@ class Watcher:
         Raises:
             Exceptions from storage operations are propagated to the caller.
         """
-        graph = self._hydrate_graph()
+        graph = self._load_graph()
+
         self._analyze_graph_structure(graph)
-        nodes, relationships = self._collect_synthetic_entities(graph)
-        self._persist_synthetic_entities(nodes, relationships)
-
-        self._update_dead_code_flags(graph)
-
-        if self._run_coupling:
-            self._process_code_coupling(graph)
-
-        self._update_embeddings_for_dirty_nodes(graph)
-
+        self._collect_synthetic_entities(graph)
+        self._update_dead_flags(graph)
+        self._process_code_coupling(graph)
+        self._re_embedd_nodes(graph)
         self._storage.rebuild_fts_indexes()
 
         logger.info("Incremental global phases complete.")
 
-    def _hydrate_graph(self) -> KnowledgeGraph:
+    def _load_graph(self) -> KnowledgeGraph:
         """
         Hydrate a KnowledgeGraph from the storage backend.
 
         This operation clears synthetic nodes first to ensure a clean state,
         then loads the complete graph including all nodes and relationships.
         """
-        self._storage.delete_synthetic_nodes()
+        if not (small_change := len(self._dirty_files) < self._SMALL_CHANGE_THRESHOLD):
+            self._small_change = small_change
+            self._storage.delete_synthetic_nodes()
+
         logger.info("Hydrating graph from storage...")
         return self._storage.load_graph()
 
@@ -283,19 +302,22 @@ class Watcher:
             - 'processes': Number of processes identified
             - 'dead_code': Number of dead code symbols found
         """
-        num_communities = Community(graph).process_communities()
-        logger.info(f"Communities: {num_communities}")
+        if self._small_change:
+            logger.info(
+                "Small change (%d files) — skipping communities/processes",
+                len(self._dirty_files),
+            )
+        else:
+            num_communities = Community(graph).process_communities()
+            logger.info(f"Communities: {num_communities}")
 
-        num_processes = Processes(graph).process_processes()
-        logger.info(f"Processes: {num_processes}")
+            num_processes = Processes(graph).process_processes()
+            logger.info(f"Processes: {num_processes}")
 
         num_dead = DeadCode(graph).process_dead_code()
         logger.info(f"Dead code: {num_dead}")
 
-    def _collect_synthetic_entities(
-        self,
-        graph: KnowledgeGraph,
-    ) -> tuple[list[GraphNode], list[GraphRelationship]]:
+    def _collect_synthetic_entities(self, graph: KnowledgeGraph) -> None:
         """
         Collect synthetic entities (communities and processes) from the graph.
 
@@ -307,40 +329,28 @@ class Watcher:
             - nodes: List of COMMUNITY and PROCESS nodes
             - relationships: List of MEMBER_OF and STEP_IN_PROCESS relationships
         """
-        nodes: list[GraphNode] = []
-        relationships: list[GraphRelationship] = []
+        if self._small_change:
+            return
+
+        new_nodes: list[GraphNode] = []
+        new_relationships: list[GraphRelationship] = []
 
         community_nodes = graph.get_nodes_by_label(NodeLabel.COMMUNITY)
         process_nodes = graph.get_nodes_by_label(NodeLabel.PROCESS)
-        nodes.extend(community_nodes)
-        nodes.extend(process_nodes)
+        new_nodes.extend(community_nodes)
+        new_nodes.extend(process_nodes)
 
         member_rels = graph.get_relationships_by_type(RelType.MEMBER_OF)
         step_rels = graph.get_relationships_by_type(RelType.STEP_IN_PROCESS)
-        relationships.extend(member_rels)
-        relationships.extend(step_rels)
+        new_relationships.extend(member_rels)
+        new_relationships.extend(step_rels)
 
-        return nodes, relationships
+        if new_nodes:
+            self._storage.add_nodes(new_nodes)
+        if new_relationships:
+            self._storage.add_relationships(new_relationships)
 
-    def _persist_synthetic_entities(
-        self,
-        nodes: list[GraphNode],
-        relationships: list[GraphRelationship],
-    ) -> None:
-        """
-        Persist synthetic entities to storage.
-
-        Args:
-            storage: The storage backend to save entities to.
-            nodes: List of synthetic nodes to persist.
-            relationships: List of synthetic relationships to persist.
-        """
-        if nodes:
-            self._storage.add_nodes(nodes)
-        if relationships:
-            self._storage.add_relationships(relationships)
-
-    def _update_dead_code_flags(self, graph: KnowledgeGraph) -> None:
+    def _update_dead_flags(self, graph: KnowledgeGraph) -> None:
         """
         Update dead code flags in storage based on current graph analysis.
 
@@ -352,7 +362,7 @@ class Watcher:
         alive_ids = {n.id for n in graph.iter_nodes() if not n.is_dead}
         self._storage.update_dead_flags(dead_ids, alive_ids)
 
-    def _process_code_coupling(self, graph: KnowledgeGraph) -> int:
+    def _process_code_coupling(self, graph: KnowledgeGraph) -> None:
         """
         Process code coupling analysis and persist results.
 
@@ -367,20 +377,18 @@ class Watcher:
         Returns:
             The number of coupling pairs detected.
         """
+        if not self._run_coupling:
+            return
+
         self._storage.remove_relationships_by_type(RelType.COUPLED_WITH)
         num_coupled = Coupling(graph, self._repo_path).process_coupling()
 
-        coupled_rels = list(graph.get_relationships_by_type(RelType.COUPLED_WITH))
-        if coupled_rels:
+        if coupled_rels := list(graph.get_relationships_by_type(RelType.COUPLED_WITH)):
             self._storage.add_relationships(coupled_rels)
 
         logger.info("Coupling: %d pairs", num_coupled)
-        return num_coupled
 
-    def _update_embeddings_for_dirty_nodes(
-        self,
-        graph: KnowledgeGraph,
-    ) -> None:
+    def _re_embedd_nodes(self, graph: KnowledgeGraph) -> None:
         """
         Update embeddings for nodes affected by dirty files.
 
@@ -396,16 +404,16 @@ class Watcher:
             Runtime errors during embedding are logged as warnings but not
             propagated, allowing the watch process to continue.
         """
-        dirty_node_ids = self._compute_dirty_node_ids(graph)
-        if not dirty_node_ids:
+        if not (dirty_node_ids := self._compute_dirty_node_ids(graph)):
             return
 
         logger.info("Re-embedding %d nodes...", len(dirty_node_ids))
         try:
-            embeddings = embed_nodes(graph, dirty_node_ids)
-            if embeddings:
-                self._storage.upsert_embeddings(embeddings)
-        except RuntimeError:
+            if not (embedded := embed_nodes(graph, dirty_node_ids)):
+                return
+
+            self._storage.upsert_embeddings(embedded)
+        except (RuntimeError, SystemError, OSError, TimeoutError, MemoryError):
             logger.warning("Incremental embedding failed", exc_info=True)
 
     def _compute_dirty_node_ids(self, graph: KnowledgeGraph) -> set[str]:

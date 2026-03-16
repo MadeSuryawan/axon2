@@ -91,6 +91,13 @@ def _node_changed(base: GraphNode, current: GraphNode) -> bool:
     return any(getattr(base, attr) != getattr(current, attr) for attr in _NODE_COMPARE_FIELDS)
 
 
+def _normalize_id(node_id: str, src: str, dst: str) -> str:
+    """Replace *src* prefix with *dst* in *node_id*."""
+    if src and node_id.startswith(src):
+        return dst + node_id[len(src) :]
+    return node_id
+
+
 def diff_branches(
     repo_path: Path,
     branch_range: str,
@@ -120,7 +127,6 @@ def diff_branches(
         ValueError: If the branch range format is invalid.
         RuntimeError: If git operations fail.
     """
-
     if ".." in branch_range:
         parts = branch_range.split("..", 1)
         base_ref = parts[0].strip()
@@ -133,26 +139,38 @@ def diff_branches(
         details = f"Invalid branch range: {branch_range!r}"
         raise ValueError(details)
 
+    repo_str = f"{repo_path}"
+
     # Build both graphs (in parallel when both need worktrees).
     if current_ref:
         with ThreadPoolExecutor(max_workers=2) as executor:
             base_future = executor.submit(_build_graph_for_ref, repo_path, base_ref)
             current_future = executor.submit(_build_graph_for_ref, repo_path, current_ref)
-            base_graph = base_future.result()
-            current_graph = current_future.result()
+            base_graph, base_wt = base_future.result()
+            current_graph, current_wt = current_future.result()
     else:
         current_graph = Pipelines(repo_path).build_graph()
-        base_graph = _build_graph_for_ref(repo_path, base_ref)
+        current_wt = repo_str
+        base_graph, base_wt = _build_graph_for_ref(repo_path, base_ref)
 
-    base_nodes = {n.id: n for n in base_graph.iter_nodes()}
-    current_nodes = {n.id: n for n in current_graph.iter_nodes()}
-    base_rels = {r.id: r for r in base_graph.iter_relationships()}
-    current_rels = {r.id: r for r in current_graph.iter_relationships()}
+    base_wt_str = f"{base_wt}"
+    current_wt_str = f"{current_wt}"
+
+    base_nodes = {_normalize_id(n.id, base_wt_str, repo_str): n for n in base_graph.iter_nodes()}
+    current_nodes = {
+        _normalize_id(n.id, current_wt_str, repo_str): n for n in current_graph.iter_nodes()
+    }
+    base_rels = {
+        _normalize_id(r.id, base_wt_str, repo_str): r for r in base_graph.iter_relationships()
+    }
+    current_rels = {
+        _normalize_id(r.id, current_wt_str, repo_str): r for r in current_graph.iter_relationships()
+    }
 
     return diff_graphs(base_nodes, current_nodes, base_rels, current_rels)
 
 
-def _build_graph_for_ref(repo_path: Path, ref: str) -> KnowledgeGraph:
+def _build_graph_for_ref(repo_path: Path, ref: str) -> tuple[KnowledgeGraph, str]:
     """Build an in-memory graph for a git ref using a temporary worktree."""
 
     with TemporaryDirectory(prefix="axon_diff_") as tmp_dir:
@@ -163,7 +181,7 @@ def _build_graph_for_ref(repo_path: Path, ref: str) -> KnowledgeGraph:
             ["git", "worktree", "remove", "--force", f"{worktree_path}"],
             repo_path,
             worktree_path,
-        )
+        ), str(worktree_path)
 
 
 def _create_worktree(command: list[str], repo_path: Path, ref: str) -> None:

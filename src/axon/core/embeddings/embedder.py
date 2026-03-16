@@ -10,7 +10,7 @@ Community, Process) are deliberately skipped — they lack the semantic
 richness that makes embedding worthwhile.
 """
 
-from functools import lru_cache
+from threading import Lock
 
 from fastembed import TextEmbedding
 from fastembed.common.types import NumpyArray
@@ -22,12 +22,29 @@ from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import NodeLabel
 from axon.core.storage.base import NodeEmbedding
 
+_model_cache: dict[str, TextEmbedding] = {}
+_model_lock = Lock()
 
-@lru_cache(maxsize=4)
+
 def get_model() -> TextEmbedding:
-    """Return a cached TextEmbedding model instance."""
-    return TextEmbedding(model_name=MODEL_NAME)
+    if cached := _model_cache.get(MODEL_NAME):
+        return cached
+    with _model_lock:
+        if cached := _model_cache.get(MODEL_NAME):
+            return cached
 
+        model = TextEmbedding(model_name=MODEL_NAME)
+        _model_cache[MODEL_NAME] = model
+        return model
+
+
+def _get_model_cache_clear() -> None:
+    """Clear the model cache (used in tests)."""
+    with _model_lock:
+        _model_cache.clear()
+
+
+get_model.cache_clear = _get_model_cache_clear  # type: ignore[attr-defined]
 
 # Labels worth embedding — skip Folder, Community, Process (structural only).
 EMBEDDABLE_LABELS: frozenset[NodeLabel] = frozenset(
@@ -75,21 +92,32 @@ def embed_graph(
         each carrying the node's ID and its embedding vector as a plain
         Python ``list[float]``.
     """
-    if not (nodes := [n for n in graph.iter_nodes() if n.label in EMBEDDABLE_LABELS]):
+    if not (all_nodes := [n for n in graph.iter_nodes() if n.label in EMBEDDABLE_LABELS]):
         return []
 
     class_method_idx = build_class_method_index(graph)
-    texts = [generate_text(node, graph, class_method_idx) for node in nodes]
 
+    texts: list[str] = []
+    nodes = []
+    for node in all_nodes:
+        if not (text := generate_text(node, graph, class_method_idx)) or not text.strip():
+            continue
+        texts.append(text)
+        nodes.append(node)
+
+    if not texts:
+        return []
+
+    model = get_model()
     return [
         NodeEmbedding(node_id=node.id, embedding=vector.tolist())
-        for node, vector in zip(nodes, _embed_texts(texts, batch_size), strict=True)
+        for node, vector in zip(nodes, _embed_texts(texts, batch_size, model), strict=True)
     ]
 
 
-def _embed_texts(texts: list[str], batch_size: int) -> list[NumpyArray]:
+def _embed_texts(texts: list[str], batch_size: int, model: TextEmbedding) -> list[NumpyArray]:
     """Embed a list of texts using fastembed's TextEmbedding model."""
-    model = get_model()
+
     vectors = []
     with p_bar(desc="Embedding", total=len(texts)) as pbar:
         for vector in model.embed(texts, batch_size=batch_size):
@@ -108,14 +136,32 @@ def embed_nodes(
     if not node_ids:
         return []
 
-    g_nodes = [graph.get_node(nid) for nid in node_ids]
-    if not (nodes := [n for n in g_nodes if n is not None and n.label in EMBEDDABLE_LABELS]):
+    nodes = [graph.get_node(nid) for nid in node_ids]
+    nodes = [n for n in nodes if n is not None and n.label in EMBEDDABLE_LABELS]
+
+    if not nodes:
         return []
 
     class_method_idx = build_class_method_index(graph)
 
-    texts = [generate_text(n, graph, class_method_idx) for n in nodes]
-    return [
-        NodeEmbedding(node_id=node.id, embedding=vector.tolist())
-        for node, vector in zip(nodes, _embed_texts(texts, batch_size), strict=True)
-    ]
+    texts: list[str] = []
+    valid_nodes = []
+    for node in nodes:
+        if (text := generate_text(node, graph, class_method_idx)) and text.strip():
+            texts.append(text)
+            valid_nodes.append(node)
+
+    if not texts:
+        return []
+
+    model = get_model()
+    embeddings: list[NodeEmbedding] = []
+    for node, vector in zip(valid_nodes, model.embed(texts, batch_size=batch_size), strict=True):
+        embeddings.append(
+            NodeEmbedding(
+                node_id=node.id,
+                embedding=vector.tolist(),
+            ),
+        )
+
+    return embeddings

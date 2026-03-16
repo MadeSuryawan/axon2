@@ -19,7 +19,8 @@ Phases executed:
     11. Change coupling (COUPLED_WITH edges from git history)
 """
 
-from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures._base import Future
 from dataclasses import dataclass
 from json import dump, load
 from logging import getLogger
@@ -33,7 +34,7 @@ from xxhash import xxh64
 from axon.config.ignore import load_gitignore
 from axon.core.embeddings.embedder import EMBEDDABLE_LABELS, embed_graph
 from axon.core.graph.graph import KnowledgeGraph
-from axon.core.graph.model import GraphRelationship, NodeLabel
+from axon.core.graph.model import GraphNode, GraphRelationship, NodeLabel
 from axon.core.ingestion.calls import Calls
 from axon.core.ingestion.community import Community
 from axon.core.ingestion.coupling import Coupling
@@ -42,9 +43,10 @@ from axon.core.ingestion.heritage import Heritage
 from axon.core.ingestion.imports import Imports
 from axon.core.ingestion.parser_phase import FileParseData, Parsing
 from axon.core.ingestion.processes import Processes
+from axon.core.ingestion.resolved import ResolvedEdge
 from axon.core.ingestion.structure import Structure
 from axon.core.ingestion.symbol_lookup import build_name_index
-from axon.core.ingestion.types import process_types
+from axon.core.ingestion.types import Types
 from axon.core.ingestion.walker import FileEntry, walk_repo
 from axon.core.storage.base import NodeEmbedding, StorageBackend
 
@@ -74,6 +76,16 @@ _SYMBOL_LABELS: frozenset[NodeLabel] = frozenset(NodeLabel) - {
     NodeLabel.COMMUNITY,
     NodeLabel.PROCESS,
 }
+
+_SHARED_LABELS = (
+    NodeLabel.FUNCTION,
+    NodeLabel.METHOD,
+    NodeLabel.CLASS,
+    NodeLabel.INTERFACE,
+    NodeLabel.TYPE_ALIAS,
+)
+
+_HERITAGE_LABELS = {NodeLabel.CLASS, NodeLabel.INTERFACE}
 
 
 class Pipelines:
@@ -108,6 +120,11 @@ class Pipelines:
         self._parsed_data: list[FileParseData] = []
         self._embeddings_file = self._repo_path / ".axon" / "embeddings.json"
         self._saved_embeddings: dict | None = None
+        self._name_index: dict[str, list[str]] = build_name_index(
+            self._graph,
+            _SHARED_LABELS,
+        )
+        self._heritage_name_index: dict[str, list[str]] = {}
 
     @property
     def graph(self) -> KnowledgeGraph:
@@ -116,46 +133,6 @@ class Pipelines:
     @property
     def result(self) -> PipelineResult:
         return self._result
-
-    def _phases(self) -> dict[str, Callable[[], None | Any]]:
-
-        return {
-            "Processing structure": lambda: Structure(self._graph).process_structure(self._files),
-            "Parsing code": lambda: setattr(
-                self,
-                "_parsed_data",
-                Parsing(self._graph).process_parsing(self._files),
-            ),
-            "Resolving imports": lambda: Imports(self._graph, self._parsed_data).process_imports(
-                parallel=True,
-            ),
-            "Tracing calls": lambda: Calls(self._parsed_data, self._graph).process_calls(),
-            "Extracting heritage": lambda: Heritage(
-                self._graph,
-                self._parsed_data,
-            ).process_heritage(),
-            "Analyzing types": lambda: process_types(self._parsed_data, self._graph),
-            "Detecting communities": lambda: setattr(
-                self._result,
-                "clusters",
-                Community(self._graph).process_communities(),
-            ),
-            "Detecting execution flows": lambda: setattr(
-                self._result,
-                "processes",
-                Processes(self._graph).process_processes(),
-            ),
-            "Finding dead code": lambda: setattr(
-                self._result,
-                "dead_code",
-                DeadCode(self._graph).process_dead_code(),
-            ),
-            "Analyzing git history": lambda: setattr(
-                self._result,
-                "coupled_pairs",
-                Coupling(self._graph, self._repo_path).process_coupling(),
-            ),
-        }
 
     def run_pipelines(self) -> None:
         """
@@ -168,9 +145,13 @@ class Pipelines:
         rprint("[b green]Running pipelines :\n")
         start = monotonic()
         self._walk_files()
+        self._phase_2_to_4()
+        self._get_heritage_name_idx()
 
-        for phase, pipeline in self._phases().items():
-            rprint(f"[b blue]{phase}..."), pipeline()
+        rprint("[b blue]Resolving relationships...")
+        self._phase_5_to_7()
+
+        self._phase_8_to_11(self._graph.get_nodes_by_label(NodeLabel.FILE))
 
         self._update_rest_result()
         self._result.duration_seconds = monotonic() - start
@@ -180,6 +161,99 @@ class Pipelines:
         self._gitignore = load_gitignore(self._repo_path)
         self._files = walk_repo(self._repo_path, self._gitignore)
         self._result.files = len(self._files)
+
+    def _phase_2_to_4(self) -> None:
+        rprint("[b blue]Processing structure...")
+        Structure(self._graph).process_structure(self._files)
+
+        rprint("[b blue]Parsing code...")
+        parse_data = Parsing(self._graph).process_parsing(self._files)
+
+        rprint("[b blue]Resolving imports...")
+        Imports(self._graph, parse_data).process_imports(parallel=True)
+        self._parsed_data = parse_data
+
+    def _get_heritage_name_idx(self) -> None:
+        """Build heritage name index."""
+        for name, ids in self._name_index.items():
+            if not (filtered := self._heritage_filtering(ids)):
+                continue
+            self._heritage_name_index.update({name: filtered})
+
+    def _heritage_filtering(self, ids: list[str]) -> list[str]:
+        """Filter out ids that are not in _HERITAGE_LABELS."""
+        return [
+            nid for nid in ids if (n := self._graph.get_node(nid)) and n.label in _HERITAGE_LABELS
+        ]
+
+    def _phase_5_to_7(self) -> None:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            rprint("\t[b blue]Resolving calls...")
+            calls_f = pool.submit(
+                Calls(self._parsed_data, self._graph, self._name_index).process_calls,
+                parallel=False,
+                collect=True,
+            )
+            rprint("\t[b blue]Resolving heritage...")
+            heritage_f = pool.submit(
+                Heritage(self._graph, self._parsed_data, self._name_index).process_heritage,
+                parallel=False,
+                collect=True,
+            )
+            rprint("\t[b blue]Resolving types...")
+            types_f = pool.submit(
+                Types(self._parsed_data, self._graph, self._name_index).process_types,
+                parallel=False,
+                collect=True,
+            )
+
+        self._add_collected_edges(calls_f.result() or [])
+        self._update_node_property(heritage_f)
+        self._add_collected_edges(types_f.result() or [])
+
+    def _add_collected_edges(self, edges: list[ResolvedEdge]) -> None:
+        """Add a batch of resolved edges to the graph (sequential, deduped)."""
+        for edge in edges:
+            self._graph.add_relationship(
+                GraphRelationship(
+                    id=edge.rel_id,
+                    type=edge.rel_type,
+                    source=edge.source,
+                    target=edge.target,
+                    properties=edge.properties,
+                ),
+            )
+
+    def _update_node_property(self, heritage_f: Future) -> None:
+        """Update node properties from heritage resolution."""
+        if not (future := heritage_f.result()):
+            return
+
+        heritage_edges, heritage_patches = future
+        self._add_collected_edges(heritage_edges)
+        for patch in heritage_patches:
+            node = self._graph.get_node(patch.node_id)
+            node.properties.update({patch.key: patch.value}) if node else None
+
+    def _phase_8_to_11(self, coupling_nodes: list[GraphNode]) -> None:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            coupling_future = pool.submit(
+                Coupling(self._graph, self._repo_path, coupling_nodes).resolve_coupling,
+            )
+
+            rprint("[b blue]Detecting communities...")
+            self._result.clusters = Community(self._graph).process_communities()
+
+            rprint("[b blue]Detecting execution flows...")
+            self._result.processes = Processes(self._graph).process_processes()
+
+            rprint("[b blue]Finding dead code...")
+            self._result.dead_code = DeadCode(self._graph).process_dead_code()
+
+            rprint("[b blue]Analyzing git history...")
+            coupling_edges = coupling_future.result()
+            self._add_collected_edges(coupling_edges)
+            self._result.coupled_pairs = len(coupling_edges)
 
     def _update_rest_result(self) -> None:
         self._result.symbols = sum(1 for n in self._graph.iter_nodes() if n.label in _SYMBOL_LABELS)
@@ -351,15 +425,13 @@ def reindex_files(
     saved_edges = _collect_saved_edges(changed_files, storage, file_entries)
 
     graph = storage.load_graph()
+
     Structure(graph).process_structure(file_entries)
-
     parse_data = Parsing(graph).process_parsing(file_entries)
-    shared_name_index, heritage_name_index = _get_heritage_name_idx(graph)
-
     Imports(graph, parse_data).process_imports()
-    Calls(parse_data, graph).process_calls()
-    Heritage(graph, parse_data).process_heritage()
-    process_types(parse_data, graph)
+    Calls(parse_data, graph, {}).process_calls()
+    Heritage(graph, parse_data, {}).process_heritage()
+    Types(parse_data, graph, {}).process_types()
     _update_storage(graph, storage, changed_files, saved_edges, rebuild_fts=rebuild_fts)
 
     return graph
@@ -370,6 +442,7 @@ def _collect_saved_edges(
     storage: StorageBackend,
     file_entries: list[FileEntry],
 ) -> list[GraphRelationship]:
+    """Collect inbound edges from unchanged files before deleting changed files."""
 
     saved_edges = [
         rel
@@ -381,24 +454,6 @@ def _collect_saved_edges(
         storage.remove_nodes_by_file(entry.path)
 
     return saved_edges
-
-
-def _get_heritage_name_idx(graph: KnowledgeGraph) -> tuple[dict[str, list[str]], ...]:
-    shared_labels = (
-        NodeLabel.FUNCTION,
-        NodeLabel.METHOD,
-        NodeLabel.CLASS,
-        NodeLabel.INTERFACE,
-        NodeLabel.TYPE_ALIAS,
-    )
-    shared_name_index = build_name_index(graph, shared_labels)
-    heritage_labels = {NodeLabel.CLASS, NodeLabel.INTERFACE}
-    heritage_name_index: dict[str, list[str]] = {}
-    for name, ids in shared_name_index.items():
-        filtered = [nid for nid in ids if (n := graph.get_node(nid)) and n.label in heritage_labels]
-        heritage_name_index.update({name: filtered}) if filtered else None
-
-    return shared_name_index, heritage_name_index
 
 
 def _update_storage(

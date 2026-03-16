@@ -2,10 +2,38 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from os import walk
 from pathlib import Path
+from subprocess import CompletedProcess, TimeoutExpired
+from subprocess import run as subprocess_run
 
-from axon.config.ignore import should_ignore
+from axon.config.ignore import DEFAULT_IGNORE_PATTERNS, should_ignore
 from axon.config.languages import get_language, is_supported
+
+_PRUNE_DIRS = frozenset(
+    p for p in DEFAULT_IGNORE_PATTERNS if ("*" not in p and "." not in p) or p.startswith(".")
+) | frozenset(
+    {
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".env",
+        "dist",
+        "build",
+        ".idea",
+        ".vscode",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        ".eggs",
+        ".axon",
+    },
+)
+
+cmmnd = ["git", "ls-files", "--cached", "--others", "--exclude-standard"]
 
 
 @dataclass
@@ -17,10 +45,64 @@ class FileEntry:
     language: str  # "python", "typescript", "javascript"
 
 
-def discover_files(
+def _discover_via_git(repo_path: Path, gitignore_patterns: list[str] | None) -> list[Path] | None:
+    try:
+        result = subprocess_run(
+            cmmnd,
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        if result.returncode != 0:
+            return
+    except (TimeoutExpired, FileNotFoundError):
+        return
+
+    return _process_git_output(result, repo_path, gitignore_patterns)
+
+
+def _process_git_output(
+    result: CompletedProcess[str],
     repo_path: Path,
-    gitignore_patterns: list[str] | None = None,
+    gitignore_patterns: list[str] | None,
 ) -> list[Path]:
+    discovered: list[Path] = []
+    for line in result.stdout.splitlines():
+        if not (striped := line.strip()):
+            continue
+        if should_ignore(striped, gitignore_patterns):
+            continue
+        full = repo_path / striped
+        if is_supported(full):
+            discovered.append(full)
+    return discovered
+
+
+def _discover_via_walk(repo_path: Path, gitignore_patterns: list[str] | None) -> list[Path]:
+    discovered: list[Path] = []
+
+    for dirpath, dirnames, filenames in walk(repo_path, topdown=True):
+        dirnames[:] = [d for d in dirnames if d not in _PRUNE_DIRS and not d.endswith(".egg-info")]
+
+        for fname in filenames:
+            full = Path(dirpath) / fname
+            try:
+                relative = full.relative_to(repo_path)
+            except ValueError:
+                continue
+
+            if should_ignore(str(relative), gitignore_patterns):
+                continue
+            if not is_supported(full):
+                continue
+            discovered.append(full)
+
+    return discovered
+
+
+def discover_files(repo_path: Path, gitignore_patterns: list[str] | None = None) -> list[Path]:
     """
     Discover supported source file paths without reading their content.
 
@@ -41,24 +123,10 @@ def discover_files(
     list[Path]
         List of absolute :class:`Path` objects for each discovered file.
     """
-    repo_path = repo_path.resolve()
-    discovered: list[Path] = []
+    if result := _discover_via_git((resolved := repo_path.resolve()), gitignore_patterns):
+        return result
 
-    for file_path in repo_path.rglob("*"):
-        if not file_path.is_file():
-            continue
-
-        relative = file_path.relative_to(repo_path)
-
-        if should_ignore(str(relative), gitignore_patterns):
-            continue
-
-        if not is_supported(file_path):
-            continue
-
-        discovered.append(file_path)
-
-    return discovered
+    return _discover_via_walk(resolved, gitignore_patterns)
 
 
 def read_file(repo_path: Path, file_path: Path) -> FileEntry | None:
@@ -71,16 +139,13 @@ def read_file(repo_path: Path, file_path: Path) -> FileEntry | None:
     relative = file_path.relative_to(repo_path)
 
     try:
-        content = file_path.read_text(encoding="utf-8")
+        if not (content := file_path.read_text(encoding="utf-8")):
+            return
     except (UnicodeDecodeError, ValueError, OSError):
-        return None
+        return
 
-    if not content:
-        return None
-
-    language = get_language(file_path)
-    if language is None:
-        return None
+    if not (language := get_language(file_path)):
+        return
 
     return FileEntry(
         path=str(relative),
@@ -122,6 +187,4 @@ def walk_repo(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = executor.map(lambda fp: read_file(repo_path, fp), file_paths)
 
-    entries = [entry for entry in results if entry is not None]
-    entries.sort(key=lambda e: e.path)
-    return entries
+    return sorted([entry for entry in results if entry], key=lambda e: e.path)

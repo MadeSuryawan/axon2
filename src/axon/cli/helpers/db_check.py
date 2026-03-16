@@ -58,7 +58,7 @@ async def start_serve(
 
         await gather(
             _mcp_then_stop(),
-            Watcher(deps).watch(),
+            Watcher(deps).watch_repo(),
         )
 
 

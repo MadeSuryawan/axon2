@@ -47,7 +47,7 @@ class TsTypeExtractor:
     """
 
     # Builtin types that are commonly used but not useful for type analysis.
-    _BUILTIN_TYPES: frozenset[str] = frozenset(
+    _BUILTIN_TYPES = frozenset(
         {
             "string",
             "number",
@@ -670,10 +670,11 @@ class TsFunctionExtractor:
         """
         current = node.parent
         while current is not None:
-            if current.type != "class_declaration":
-                current = current.parent
-                continue
-            if (name_node := current.child_by_field_name("name")) and (text := name_node.text):
+            if (
+                current.type in ("class_declaration", "class_expression")
+                and (name_node := current.child_by_field_name("name"))
+                and (text := name_node.text)
+            ):
                 return text.decode()
             current = current.parent
         return ""
@@ -777,11 +778,13 @@ class TsClassExtractor:
             kind: The kind of heritage (extends or implements).
         """
         for sub in children:
-            if sub.type not in ("identifier", "type_identifier"):
-                continue
-            if not (text := sub.text):
-                continue
-            result.heritage.append((class_name, kind, text.decode()))
+            if sub.type in ("identifier", "type_identifier") and (text := sub.text):
+                result.heritage.append((class_name, kind, text.decode()))
+
+            elif sub.type == "generic_type" and (name_node := sub.child_by_field_name("name")):
+                if not (text := name_node.text):
+                    continue
+                result.heritage.append((class_name, kind, text.decode()))
 
     def extract_interface(
         self,

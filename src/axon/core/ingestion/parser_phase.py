@@ -93,8 +93,12 @@ class Parsing:
     # Default maximum number of worker threads for parallel parsing
     _DEFAULT_MAX_WORKERS: int = 8
 
-    # Supported languages for parsing
-    _SUPPORTED_LANGUAGES: tuple[str, ...] = ("python", "typescript", "javascript")
+    _PARSER_FACTORIES: dict[str, Callable[[], LanguageParser]] = {
+        "python": PythonParser,
+        "typescript": lambda: TypeScriptParser(dialect="typescript"),
+        "tsx": lambda: TypeScriptParser(dialect="tsx"),
+        "javascript": lambda: TypeScriptParser(dialect="javascript"),
+    }
 
     def __init__(
         self,
@@ -173,100 +177,6 @@ class Parsing:
             )
         return all_parse_data
 
-    def _parse_file(self, file_path: str, content: str, language: str) -> FileParseData:
-        """
-        Parse a single file and return structured parse data.
-
-        If parsing fails for any reason the returned :class:`FileParseData` will
-        contain an empty :class:`ParseResult` so that downstream phases can
-        safely skip it.
-
-        Args:
-            file_path: Relative path to the file (used for identification).
-            content: Raw source code of the file.
-            language: Language identifier (e.g., "python", "typescript").
-
-        Returns:
-            A :class:`FileParseData` carrying the parse result.
-        """
-        try:
-            parser = self._get_parser(language)
-            result = parser.parse(content, file_path)
-        except (RuntimeError, ValueError, SystemError, OSError):
-            logger.warning(
-                "Failed to parse %s (%s), skipping",
-                file_path,
-                language,
-                exc_info=True,
-            )
-            result = ParseResult()
-
-        return FileParseData(
-            file_path=file_path,
-            language=language,
-            parse_result=result,
-        )
-
-    def _get_parser(self, language: str) -> LanguageParser:
-        """
-        Return the appropriate tree-sitter parser for *language*.
-
-        Parser instances are cached per language to avoid repeated instantiation
-        of tree-sitter ``Parser`` objects, which is expensive.
-
-        Args:
-            language: One of "python", "typescript", or "javascript".
-
-        Returns:
-            A :class:`LanguageParser` instance ready to parse source code.
-
-        Raises:
-            ValueError: If *language* is not supported.
-        """
-        # Return cached parser if available
-        if cached := self._parser_cache.get(language):
-            return cached
-        with self._parser_cache_lock:
-            if cached := self._parser_cache.get(language):
-                return cached
-            # Create new parser based on language
-            parser = self._create_parser(language)
-            # Cache the parser for future use
-            self._parser_cache[language] = parser
-        return parser
-
-    def _lang_parsers(self) -> dict[str, Callable[[], LanguageParser]]:
-        """Return a mapping of language -> parser instance."""
-        return {
-            "python": PythonParser,
-            "typescript": lambda: TypeScriptParser(dialect="typescript"),
-            "javascript": lambda: TypeScriptParser(dialect="javascript"),
-            "tsx": lambda: TypeScriptParser(dialect="tsx"),
-        }
-
-    def _create_parser(self, language: str) -> LanguageParser:
-        """
-        Create a new parser instance for the specified language.
-
-        Args:
-            language: The language to create a parser for.
-
-        Returns:
-            A new LanguageParser instance.
-
-        Raises:
-            ValueError: If the language is not supported.
-        """
-        if factory := self._lang_parsers().get(language):
-            return factory()
-
-        # Unsupported language - raise error with helpful message
-        details = (
-            f"Unsupported language {language!r}. "
-            f"Expected one of: {', '.join(self._SUPPORTED_LANGUAGES)}"
-        )
-        raise ValueError(details)
-
     def _populate_graph_with_symbols(
         self,
         files: list[FileEntry],
@@ -288,19 +198,13 @@ class Parsing:
             file_id = generate_id(NodeLabel.FILE, file_entry.path)
 
             # Extract exported names from this file
-            exported_names: set[str] = set(parse_data.parse_result.exports)
+            exported_names = set(parse_data.parse_result.exports)
 
             # Build class -> base class names mapping for class nodes
             class_bases = self._build_class_bases_map(parse_data.parse_result)
 
             # Create symbol nodes and DEFINES relationships
-            self._add_symbols_to_graph(
-                file_entry=file_entry,
-                parse_data=parse_data,
-                file_id=file_id,
-                exported_names=exported_names,
-                class_bases=class_bases,
-            )
+            self._add_symbols_to_graph(file_entry, parse_data, file_id, exported_names, class_bases)
 
     def _build_class_bases_map(self, parse_result: ParseResult) -> dict[str, list[str]]:
         """
@@ -317,8 +221,9 @@ class Parsing:
         """
         class_bases: dict[str, list[str]] = {}
         for cls_name, kind, parent_name in parse_result.heritage:
-            if kind == "extends":
-                class_bases.setdefault(cls_name, []).append(parent_name)
+            if kind != "extends":
+                continue
+            class_bases.setdefault(cls_name, []).append(parent_name)
         return class_bases
 
     def _add_symbols_to_graph(
@@ -344,8 +249,7 @@ class Parsing:
         """
         for symbol in parse_data.parse_result.symbols:
             # Get the appropriate node label for this symbol kind
-            label = self._KIND_TO_LABEL.get(symbol.kind)
-            if label is None:
+            if not (label := self._KIND_TO_LABEL.get(symbol.kind)):
                 logger.warning(
                     "Unknown symbol kind %r for %s in %s, skipping",
                     symbol.kind,
@@ -418,17 +322,14 @@ class Parsing:
         Returns:
             Dictionary of properties to attach to the symbol node.
         """
-        props: dict[str, list[str]] = {}
+        props = {}
         if symbol.decorators:
             props["decorators"] = symbol.decorators
         if symbol.kind == "class" and symbol.name in class_bases:
             props["bases"] = class_bases[symbol.name]
         return props
 
-    def _create_symbol_node(
-        self,
-        params: SymbolNodeParams,
-    ) -> None:
+    def _create_symbol_node(self, params: SymbolNodeParams) -> None:
         """
         Create and add a symbol node to the knowledge graph.
 
@@ -451,11 +352,7 @@ class Parsing:
         )
         self._graph.add_node(node)
 
-    def _create_defines_relationship(
-        self,
-        source_id: str,
-        target_id: str,
-    ) -> None:
+    def _create_defines_relationship(self, source_id: str, target_id: str) -> None:
         """
         Create a DEFINES relationship from a File node to a Symbol node.
 
@@ -471,3 +368,85 @@ class Parsing:
             target=target_id,
         )
         self._graph.add_relationship(rel)
+
+    def _parse_file(self, file_path: str, content: str, language: str) -> FileParseData:
+        """
+        Parse a single file and return structured parse data.
+
+        If parsing fails for any reason the returned :class:`FileParseData` will
+        contain an empty :class:`ParseResult` so that downstream phases can
+        safely skip it.
+
+        Args:
+            file_path: Relative path to the file (used for identification).
+            content: Raw source code of the file.
+            language: Language identifier (e.g., "python", "typescript").
+
+        Returns:
+            A :class:`FileParseData` carrying the parse result.
+        """
+        try:
+            parser = self._get_parser(language)
+            result = parser.parse(content, file_path)
+        except (RuntimeError, ValueError, SystemError, OSError):
+            logger.warning(
+                "Failed to parse %s (%s), skipping",
+                file_path,
+                language,
+                exc_info=True,
+            )
+            result = ParseResult()
+
+        return FileParseData(
+            file_path=file_path,
+            language=language,
+            parse_result=result,
+        )
+
+    def _get_parser(self, language: str) -> LanguageParser:
+        """
+        Return the appropriate tree-sitter parser for *language*.
+
+        Parser instances are cached per language to avoid repeated instantiation
+        of tree-sitter ``Parser`` objects, which is expensive.
+
+        Args:
+            language: One of "python", "typescript", or "javascript".
+
+        Returns:
+            A :class:`LanguageParser` instance ready to parse source code.
+
+        Raises:
+            ValueError: If *language* is not supported.
+        """
+        # Return cached parser if available
+        if cached := self._parser_cache.get(language):
+            return cached
+        with self._parser_cache_lock:
+            if cached := self._parser_cache.get(language):
+                return cached
+            # Create new parser based on language
+            parser = self._create_parser(language)
+            # Cache the parser for future use
+            self._parser_cache[language] = parser
+        return parser
+
+    def _create_parser(self, language: str) -> LanguageParser:
+        """
+        Create a new parser instance for the specified language.
+
+        Args:
+            language: The language to create a parser for.
+
+        Returns:
+            A new LanguageParser instance.
+
+        Raises:
+            ValueError: If the language is not supported.
+        """
+        if factory := self._PARSER_FACTORIES.get(language):
+            return factory()
+
+        # Unsupported language - raise error with helpful message
+        details = f"Unsupported language {language!r}. Expected one of: {', '.join(self._PARSER_FACTORIES)}"
+        raise ValueError(details)

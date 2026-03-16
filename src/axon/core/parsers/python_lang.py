@@ -43,7 +43,7 @@ class PyTypeExtractor:
     """
 
     # Builtin types that are commonly used but not useful for type analysis.
-    _BUILTIN_TYPES: frozenset[str] = frozenset(
+    _BUILTIN_TYPES = frozenset(
         {
             "str",
             "int",
@@ -400,15 +400,30 @@ class PyImportExtractor:
             node: The import_from_statement AST node.
             result: The parse result to populate.
         """
-        module_name_node = node.child_by_field_name("module_name")
-        if module_name_node is None:
+        if not (module_name_node := node.child_by_field_name("module_name")):
             return
 
-        is_relative = module_name_node.type == "relative_import"
         if not (text := module_name_node.text):
             return
-        module = text.decode("utf8")
 
+        result.imports.append(
+            ImportInfo(
+                module=text.decode("utf8"),
+                names=self._extract_imported_names(node),
+                is_relative=module_name_node.type == "relative_import",
+            ),
+        )
+
+    def _extract_imported_names(self, node: Node) -> list[str]:
+        """
+        Extract imported names from an import_from_statement node.
+
+        Args:
+            node: The import_from_statement AST node.
+
+        Returns:
+            A list of imported names.
+        """
         # Extract imported names - they appear after the "import" keyword
         names: list[str] = []
         past_import = False
@@ -416,18 +431,41 @@ class PyImportExtractor:
             if child.type == "import":
                 past_import = True
                 continue
-            if past_import and child.type == "dotted_name":
-                if not (text := child.text):
-                    continue
+            if not past_import:
+                continue
+            if not (text := child.text):
+                continue
+            if child.type in ("dotted_name", "identifier"):
                 names.append(text.decode("utf8"))
+            elif child.type == "import_as_names":
+                names.extend(self._extract_childrens(child))
+            elif child.type == "wildcard_import":
+                names.append("*")
+        return names
 
-        result.imports.append(
-            ImportInfo(
-                module=module,
-                names=names,
-                is_relative=is_relative,
-            ),
-        )
+    def _extract_childrens(self, child: Node) -> list[str]:
+        """
+        Extract names from import_as_names node.
+
+        Args:
+            child: The import_as_names AST node.
+
+        Returns:
+            A list of imported names.
+        """
+        names: list[str] = []
+        for sub in child.children:
+            if sub.type in ("dotted_name", "identifier"):
+                if not (sub_text := sub.text):
+                    continue
+                names.append(sub_text.decode("utf8"))
+            elif sub.type == "aliased_import":
+                if not (name_node := sub.child_by_field_name("name")):
+                    continue
+                if not (name_text := name_node.text):
+                    continue
+                names.append(name_text.decode("utf8"))
+        return names
 
 
 class PyFunctionExtractor:
@@ -586,10 +624,20 @@ class PyClassExtractor:
             return class_name
 
         for child in superclasses.children:
-            if child.is_named and child.type == "identifier":
-                if not (text := child.text):
-                    continue
+            if not child.is_named:
+                continue
+            if not (text := child.text):
+                continue
+            if child.type in {"identifier", "attribute"}:
                 parent_name = text.decode("utf8")
+                result.heritage.append((class_name, "extends", parent_name))
+            elif child.type == "subscript":
+                # e.g. class Foo(Generic[T]): — capture "Generic"
+                if not (base := child.child_by_field_name("value")):
+                    continue
+                if not (base_text := base.text):
+                    continue
+                parent_name = base_text.decode("utf8")
                 result.heritage.append((class_name, "extends", parent_name))
 
         # Return the class name so the caller can process the body
@@ -696,10 +744,16 @@ class PyCallExtractor:
         # Handle exception handlers: except SomeError:
         if node_type == "except_clause":
             self._extract_exception_handler(node, result)
+            for child in node.children:
+                self.extract_calls_recursive(child, result)
+            return  # prevent fall-through to generic child recursion
 
         # Handle raise statements: raise SomeError
         if node_type == "raise_statement":
             self._extract_raise_statement(node, result)
+            for child in node.children:
+                self.extract_calls_recursive(child, result)
+            return  # prevent fall-through to generic child recursion
 
         # Continue recursion for all other node types
         for child in node.children:
@@ -841,8 +895,7 @@ class PyCallExtractor:
         for child in reversed(attr_node.children):
             if child.type != "identifier":
                 continue
-            text = child.text
-            if not text:
+            if not (text := child.text):
                 continue
             method_name = text.decode("utf8")
             break
@@ -853,9 +906,8 @@ class PyCallExtractor:
         if obj_node is not None:
             obj_type = obj_node.type
             if obj_type == "identifier":
-                if not (text := obj_node.text):
-                    return method_name, ""
-                receiver = text.decode("utf8")
+                if text := obj_node.text:
+                    receiver = text.decode("utf8")
             elif obj_type == "attribute":
                 # Nested attribute: self.logger.info -> receiver is "self"
                 receiver = self._root_identifier(obj_node)
@@ -881,10 +933,8 @@ class PyCallExtractor:
             The root identifier name, or empty string if not found.
         """
         current: Node | None = node
-        while current is not None:
-            if current.type == "identifier":
-                if not (text := current.text):
-                    break
+        while current:
+            if current.type == "identifier" and (text := current.text):
                 return text.decode("utf8")
             if not (children := current.children):
                 break

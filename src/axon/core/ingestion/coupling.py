@@ -15,7 +15,7 @@ from collections import defaultdict
 from itertools import combinations
 from logging import getLogger
 from pathlib import Path
-from subprocess import CalledProcessError
+from subprocess import CalledProcessError, TimeoutExpired
 from subprocess import run as subprocess_run
 
 from axon.core.graph.graph import KnowledgeGraph
@@ -25,6 +25,7 @@ from axon.core.graph.model import (
     NodeLabel,
     RelType,
 )
+from axon.core.ingestion.resolved import ResolvedEdge
 
 logger = getLogger(__name__)
 
@@ -44,26 +45,136 @@ class Coupling:
     # Maximum files per commit to consider (skip merge commits, bulk reformats)
     _DEFAULT_MAX_FILES_PER_COMMIT: int = 50
 
-    def __init__(self, graph: KnowledgeGraph, repo_path: Path) -> None:
+    def __init__(
+        self,
+        graph: KnowledgeGraph,
+        repo_path: Path,
+        file_nodes: list[GraphNode] | None = None,
+    ) -> None:
         """
         Initialize the Coupling analyzer.
 
         Args:
             graph: The knowledge graph containing File nodes.
             repo_path: Root of the git repository to analyze.
+            file_nodes: List of file nodes to analyze.
+                When ``None``, all ``File`` nodes in the graph are used.
         """
         self._graph = graph
         self._repo_path = repo_path
-        self._file_nodes: list[GraphNode] = []
-        self._graph_files: set[str] = set()
-        self._path_to_id: dict[str, str] = {}
+        self._file_nodes: list[GraphNode] = file_nodes or self._graph.get_nodes_by_label(
+            NodeLabel.FILE,
+        )
+        self._graph_files: set[str] = {n.file_path for n in self._file_nodes}
+        self._path_to_id: dict[str, str] = {n.file_path: n.id for n in self._file_nodes}
+        self._min_cochanges: int = 3
+        self._min_strength: float = 0.3
 
-    def process_coupling(
+    def resolve_coupling(self, commits: list[list[str]] | None = None) -> list[ResolvedEdge]:
+        """
+        Analyze git history and create ``COUPLED_WITH`` relationships.
+
+        Parses the git log (or uses pre-supplied *commits* for testing),
+        computes pairwise coupling strengths, and returns a list of
+        ``ResolvedEdge`` objects for pairs that exceed *min_strength*.
+
+        Args:
+            min_strength: Minimum coupling strength to create a relationship.
+            commits: Pre-parsed commit data. When provided, git log parsing
+                is skipped — useful for deterministic testing.
+            min_cochanges: Minimum number of co-changes to consider a pair.
+
+        Returns:
+            A list of ``ResolvedEdge`` objects representing ``COUPLED_WITH``
+            relationships.
+        """
+        if not commits:
+            commits = self._parse_git_log()
+
+        cochange, total_changes = self._build_cochange_matrix(commits)
+
+        edges: list[ResolvedEdge] = []
+        for (file_a, file_b), co_changes in cochange.items():
+            strength = self._calculate_coupling(file_a, file_b, co_changes, total_changes)
+            if strength < self._min_strength:
+                continue
+
+            id_a = self._path_to_id.get(file_a)
+            id_b = self._path_to_id.get(file_b)
+            if id_a is None or id_b is None:
+                continue
+
+            rel_id = f"coupled:{id_a}->{id_b}"
+            edges.append(
+                ResolvedEdge(
+                    rel_id=rel_id,
+                    rel_type=RelType.COUPLED_WITH,
+                    source=id_a,
+                    target=id_b,
+                    properties={"strength": strength, "co_changes": co_changes},
+                ),
+            )
+
+        logger.info("Created %d COUPLED_WITH relationships", len(edges))
+        return edges
+
+    def _build_cochange_matrix(
         self,
-        min_strength: float = 0.3,
-        *,
-        commits: list[list[str]] | None = None,
-    ) -> int:
+        commits: list[list[str]],
+        max_files_per_commit: int = 50,
+    ) -> tuple[dict[tuple[str, str], int], dict[str, int]]:
+        """
+        Build a co-change frequency matrix and per-file change counts.
+
+        For every pair of files that appear in the same commit, their co-change
+        count is incremented.  Only pairs whose count meets or exceeds
+        *min_cochanges* are retained.
+
+        Commits touching more than *max_files_per_commit* files are skipped
+        (merge commits, bulk reformats) to avoid O(n^2) pair explosion and
+        coupling noise.
+
+        Keys are *sorted* tuples ``(file_a, file_b)`` so that ``(A, B)`` and
+        ``(B, A)`` map to the same entry.
+
+        Args:
+            commits: List of commits, each a list of changed file paths.
+            min_cochanges: Minimum co-change count to keep a pair.
+            max_files_per_commit: Skip commits with more files than this.
+
+        Returns:
+            A tuple of (cochange_matrix, total_changes) where cochange_matrix
+            maps ``(file_a, file_b)`` sorted tuples to their count, and
+            total_changes maps each file to its total commit count.
+        """
+        counts: dict[tuple[str, str], int] = defaultdict(int)
+        total_changes: dict[str, int] = defaultdict(int)
+
+        for files in commits:
+            unique_files = sorted(set(files))
+            for f in unique_files:
+                total_changes[f] += 1
+            if len(unique_files) > max_files_per_commit:
+                continue
+            for a, b in combinations(unique_files, 2):
+                counts[(a, b)] += 1
+
+        filtered = {pair: count for pair, count in counts.items() if count >= self._min_cochanges}
+        return filtered, dict(total_changes)
+
+    @staticmethod
+    def _calculate_coupling(
+        file_a: str,
+        file_b: str,
+        co_changes: int,
+        total_changes: dict[str, int],
+    ) -> float:
+        max_changes = max(total_changes.get(file_a, 0), total_changes.get(file_b, 0))
+        if max_changes == 0:
+            return 0.0
+        return co_changes / max_changes
+
+    def process_coupling(self, commits: list[list[str]] | None = None) -> int:
         """
         Analyze git history and create ``COUPLED_WITH`` relationships.
 
@@ -72,38 +183,33 @@ class Coupling:
         nodes that exceed *min_strength*.
 
         Args:
+            graph: The knowledge graph containing ``File`` nodes.
+            repo_path: Root of the git repository.
             min_strength: Minimum coupling strength to create a relationship.
-            commits: Pre-parsed commit data. When provided, git log parsing
+            commits: Pre-parsed commit data.  When provided, ``parse_git_log``
                 is skipped — useful for deterministic testing.
+            min_cochanges: Minimum co-change count to include a pair.  Defaults
+                to 3 to keep the matrix small; pass 1 for tests with small
+                commit sets.
 
         Returns:
             The number of ``COUPLED_WITH`` relationships created.
         """
-        # Pre-cache file nodes to avoid repeated graph traversals (performance)
-        self._cache_file_nodes()
+        edges = self.resolve_coupling(commits)
 
-        if commits is None:
-            commits = self._parse_git_log()
+        for edge in edges:
+            self._graph.add_relationship(
+                GraphRelationship(
+                    id=edge.rel_id,
+                    type=edge.rel_type,
+                    source=edge.source,
+                    target=edge.target,
+                    properties=edge.properties,
+                ),
+            )
 
-        # Build co-change matrix (threshold of 1 — filter by strength later)
-        cochange = self._build_cochange_matrix(commits)
-
-        # Count total changes per file across all commits
-        total_changes = self._count_total_changes(commits)
-
-        # Create coupling relationships for pairs above threshold
-        return self._create_coupling_relationships(cochange, total_changes, min_strength)
-
-    def _cache_file_nodes(self) -> None:
-        """
-        Cache file nodes and their mappings for efficient lookups.
-
-        This pre-caching significantly improves performance when processing
-        large graphs with many file nodes.
-        """
-        self._file_nodes = self._graph.get_nodes_by_label(NodeLabel.FILE)
-        self._graph_files = {n.file_path for n in self._file_nodes}
-        self._path_to_id = {n.file_path: n.id for n in self._file_nodes}
+        logger.info("Created %d COUPLED_WITH relationships", len(edges))
+        return len(edges)
 
     def _parse_git_log(
         self,
@@ -139,7 +245,7 @@ class Coupling:
                 text=True,
                 check=True,
             )
-        except (CalledProcessError, FileNotFoundError):
+        except (CalledProcessError, FileNotFoundError, TimeoutExpired):
             logger.debug("git log failed for %s — not a git repo?", self._repo_path)
             return []
 
@@ -164,131 +270,3 @@ class Coupling:
             commits.append(current_files)
 
         return commits
-
-    def _build_cochange_matrix(
-        self,
-        commits: list[list[str]],
-        min_cochanges: int = _DEFAULT_MIN_COCHANGES,
-        max_files_per_commit: int = _DEFAULT_MAX_FILES_PER_COMMIT,
-    ) -> dict[tuple[str, str], int]:
-        """
-        Build a co-change frequency matrix from commit data.
-
-        For every pair of files that appear in the same commit, their co-change
-        count is incremented. Only pairs whose count meets or exceeds
-        *min_cochanges* are retained.
-
-        Commits touching more than *max_files_per_commit* files are skipped
-        (merge commits, bulk reformats) to avoid O(n^2) pair explosion and
-        coupling noise.
-
-        Keys are *sorted* tuples ``(file_a, file_b)`` so that ``(A, B)`` and
-        ``(B, A)`` map to the same entry.
-
-        Args:
-            commits: List of commits, each a list of changed file paths.
-            min_cochanges: Minimum co-change count to keep a pair.
-            max_files_per_commit: Skip commits with more files than this.
-
-        Returns:
-            A dict mapping ``(file_a, file_b)`` sorted tuples to their count.
-        """
-        counts: dict[tuple[str, str], int] = defaultdict(int)
-
-        for files in commits:
-            unique_files = sorted(set(files))
-            if len(unique_files) > max_files_per_commit:
-                continue
-            for a, b in combinations(unique_files, 2):
-                counts[(a, b)] += 1
-
-        return {pair: count for pair, count in counts.items() if count >= min_cochanges}
-
-    def _count_total_changes(self, commits: list[list[str]]) -> dict[str, int]:
-        """
-        Count total changes per file across all commits.
-
-        Args:
-            commits: List of commits, each a list of changed file paths.
-
-        Returns:
-            Mapping of file path to its total commit count.
-        """
-        total_changes: dict[str, int] = defaultdict(int)
-        for files in commits:
-            for f in set(files):
-                total_changes[f] += 1
-        return total_changes
-
-    def _calculate_coupling(
-        self,
-        file_a: str,
-        file_b: str,
-        co_changes: int,
-        total_changes: dict[str, int],
-    ) -> float:
-        """
-        Compute the coupling strength between two files.
-
-        The formula is::
-
-            coupling = co_changes / max(total_changes[file_a], total_changes[file_b])
-
-        This yields a value in ``[0.0, 1.0]`` — higher means more tightly coupled.
-
-        Args:
-            file_a: First file path.
-            file_b: Second file path.
-            co_changes: Number of commits where both files changed together.
-            total_changes: Mapping of file path to its total commit count.
-
-        Returns:
-            A float between 0.0 and 1.0 representing coupling strength.
-        """
-        max_changes = max(total_changes.get(file_a, 0), total_changes.get(file_b, 0))
-        if max_changes == 0:
-            return 0.0
-        return co_changes / max_changes
-
-    def _create_coupling_relationships(
-        self,
-        cochange: dict[tuple[str, str], int],
-        total_changes: dict[str, int],
-        min_strength: float,
-    ) -> int:
-        """
-        Create COUPLED_WITH relationships for file pairs above the strength threshold.
-
-        Args:
-            cochange: Co-change frequency matrix.
-            total_changes: Total changes per file.
-            min_strength: Minimum coupling strength required.
-
-        Returns:
-            The number of relationships created.
-        """
-        count = 0
-        for (file_a, file_b), co_changes in cochange.items():
-            strength = self._calculate_coupling(file_a, file_b, co_changes, total_changes)
-            if strength < min_strength:
-                continue
-
-            id_a = self._path_to_id.get(file_a)
-            id_b = self._path_to_id.get(file_b)
-            if id_a is None or id_b is None:
-                continue
-
-            rel_id = f"coupled:{id_a}->{id_b}"
-            self._graph.add_relationship(
-                GraphRelationship(
-                    id=rel_id,
-                    type=RelType.COUPLED_WITH,
-                    source=id_a,
-                    target=id_b,
-                    properties={"strength": strength, "co_changes": co_changes},
-                ),
-            )
-            count += 1
-
-        logger.info("Created %d COUPLED_WITH relationships", count)
-        return count

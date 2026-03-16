@@ -787,7 +787,7 @@ class KuzuBackend(_Helpers):
         falling back to individual inserts if COPY FROM fails.
         """
         conn = self._ensure_initialized()
-        self._nodes_count = len(graph.nodes)
+        self._nodes_count = graph.node_count
         pbar = p_bar(desc="1. Deleting detached tables", total=self._table_count)
         for table in _NODE_TABLE_NAMES:
             with suppress(Exception):

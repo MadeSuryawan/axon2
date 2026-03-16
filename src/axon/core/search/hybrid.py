@@ -52,7 +52,7 @@ def hybrid_search(
     if deps.limit <= 0:
         return []
 
-    candidate_limit = deps.limit * 3
+    candidate_limit = min(deps.limit * 3, 300)
 
     # Step 1: gather ranked lists from each source
     fts_results = deps.storage.fts_search(deps.query, limit=candidate_limit)

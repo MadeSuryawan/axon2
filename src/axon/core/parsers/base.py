@@ -27,12 +27,24 @@ class SymbolInfo:
 
 @dataclass
 class ImportInfo:
-    """A parsed import statement."""
+    """
+    A parsed import statement.
+
+    Contract:
+    - ``module``: the source module path (e.g. ``"os.path"``, ``"./utils"``).
+    - ``names``: the symbols being imported from *module* (e.g. ``["join", "exists"]``).
+      For ``import numpy as np``, ``names=["numpy"]`` (the last segment of the module),
+      NOT the alias.  For ``from os.path import join``, ``names=["join"]``.
+    - ``alias``: the local binding name when the import is aliased
+      (e.g. ``"np"`` for ``import numpy as np``, ``""`` otherwise).
+      Import resolution uses ``module`` to locate the target file; ``alias`` is
+      only relevant for local-name lookups by callers.
+    """
 
     module: str  # the module path (e.g., "os.path", "./utils")
     names: list[str] = field(default_factory=list)  # imported names (e.g., ["join", "exists"])
     is_relative: bool = False
-    alias: str = ""
+    alias: str = ""  # local binding name when aliased (e.g. "np" for "import numpy as np")
 
 
 @dataclass

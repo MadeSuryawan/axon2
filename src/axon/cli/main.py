@@ -285,11 +285,7 @@ def watch(
     check_meta_json(axon_dir, repo_path, storage, no_embeddings=no_embeddings)
 
     try:
-        deps = WatcherDeps(repo_path, storage)
-        rprint(
-            f"[b blue]Watching [b magenta]{repo_path}[/b magenta] for changes. [white](Ctrl+C to stop)",
-        )
-        asyncio_run(Watcher(deps).watch())
+        asyncio_run(Watcher(WatcherDeps(repo_path, storage)).watch_repo())
     except KeyboardInterrupt:
         rprint("\n[bold]Watch stopped.[/bold]")
     finally:

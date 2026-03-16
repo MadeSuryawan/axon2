@@ -13,7 +13,9 @@ relationships.
 """
 
 from collections import defaultdict
+from concurrent.futures.thread import ThreadPoolExecutor
 from logging import getLogger
+from os import cpu_count
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import (
@@ -22,6 +24,7 @@ from axon.core.graph.model import (
     RelType,
 )
 from axon.core.ingestion.parser_phase import FileParseData
+from axon.core.ingestion.resolved import NodePropertyPatch, ResolvedEdge
 from axon.core.ingestion.symbol_lookup import build_name_index
 
 logger = getLogger(__name__)
@@ -43,25 +46,20 @@ class Heritage:
     """
 
     # Node labels that can participate in heritage relationships
-    _HERITAGE_LABELS: tuple[NodeLabel, ...] = (
-        NodeLabel.CLASS,
-        NodeLabel.INTERFACE,
-    )
+    _HERITAGE_LABELS = NodeLabel.CLASS, NodeLabel.INTERFACE
 
     # Mapping from heritage kind string to relationship type
-    _KIND_TO_REL: dict[str, RelType] = {
-        "extends": RelType.EXTENDS,
-        "implements": RelType.IMPLEMENTS,
-    }
+    _KIND_TO_REL = {"extends": RelType.EXTENDS, "implements": RelType.IMPLEMENTS}
 
     # Marker names that indicate a class is acting as a protocol/ABC
     # These allow dead-code detection to leverage structural subtyping
-    _PROTOCOL_MARKERS: frozenset[str] = frozenset({"Protocol", "ABC", "ABCMeta"})
+    _PROTOCOL_MARKERS = frozenset({"Protocol", "ABC", "ABCMeta"})
 
     def __init__(
         self,
         graph: KnowledgeGraph,
         parse_data: list[FileParseData],
+        name_index: dict[str, list[str]],
     ) -> None:
         """
         Initialize the Heritage analyzer.
@@ -71,40 +69,17 @@ class Heritage:
                    relationships.
             parse_data: File parse results produced by the parser phase,
                         containing heritage tuples.
+            name_index: Index mapping symbol names to node IDs.
         """
         self._graph = graph
         self._parse_data = parse_data
+        self._name_index = (
+            name_index if name_index else build_name_index(graph, self._HERITAGE_LABELS)
+        )
         self._symbol_index: dict[str, list[str]] = {}
         self._skipping: dict[str, list[str]] = defaultdict(list)
-
-    def process_heritage(self) -> None:
-        """
-        Create EXTENDS and IMPLEMENTS relationships from heritage tuples.
-
-        This is the main entry point. It:
-        1. Builds a symbol index for efficient name resolution.
-        2. Processes each heritage tuple from the parse data.
-        3. Resolves child and parent class/interface names to node IDs.
-        4. Creates the appropriate relationship in the graph.
-        5. Handles protocol/ABC marker annotation for unresolved parents.
-
-        If either the child or parent node cannot be resolved (e.g., an
-        external class not present in the graph), the tuple is silently
-        skipped unless it's a known protocol marker.
-        """
-        # Step 1: Build symbol index for fast name resolution
-        # This maps class/interface names to their node IDs
         self._symbol_index = self._build_symbol_index()
-
-        # Step 2: Process each file's parse data
-        for file_parse_data in self._parse_data:
-            self._process_file_heritage(file_parse_data)
-
-        self._log_skipping()
-
-    def _log_skipping(self) -> None:
-        for reason, data in self._skipping.items():
-            logger.debug("Skipping heritage %s -> %d", reason, len(data))
+        self._workers = min(cpu_count() or 4, 8, len(self._parse_data))
 
     def _build_symbol_index(self) -> dict[str, list[str]]:
         """
@@ -118,21 +93,74 @@ class Heritage:
         """
         return build_name_index(self._graph, self._HERITAGE_LABELS)
 
-    def _process_file_heritage(self, file_parse_data: FileParseData) -> None:
+    def process_heritage(
+        self,
+        *,
+        parallel: bool = False,
+        collect: bool = False,
+    ) -> tuple[list[ResolvedEdge], list[NodePropertyPatch]] | None:
+        """
+        Create EXTENDS and IMPLEMENTS relationships from heritage tuples.
+
+        This is the main entry point. It:
+        1. Builds a symbol index for efficient name resolution.
+        2. Processes each heritage tuple from the parse data.
+        3. Resolves child and parent class/interface names to node IDs.
+        4. Creates the appropriate relationship in the graph.
+        5. Handles protocol/ABC marker annotation for unresolved parents.
+
+        If either the child or parent node cannot be resolved (e.g., an
+        external class not present in the graph), the tuple is silently
+        skipped unless it's a known protocol marker.
+
+        Args:
+            parallel: When ``True``, resolve files in parallel using threads.
+            collect: When ``True``, return flat list of edges instead of writing.
+
+        """
+        if parallel:
+            with ThreadPoolExecutor(max_workers=self._workers) as pool:
+                all_results = list(pool.map(self._resolve_file_heritage, self._parse_data))
+        else:
+            all_results = [self._resolve_file_heritage(fpd) for fpd in self._parse_data]
+
+        flat_edges = [edge for edges, _ in all_results for edge in edges]
+        flat_patches = [patch for _, patches in all_results for patch in patches]
+
+        if collect:
+            return flat_edges, flat_patches
+
+        self._add_heritage_relationship(flat_edges, flat_patches)
+        self._log_skipping()
+
+    def _log_skipping(self) -> None:
+        for reason, data in self._skipping.items():
+            logger.debug("Skipping heritage %s -> %d", reason, len(data))
+
+    def _resolve_file_heritage(
+        self,
+        file_parse_data: FileParseData,
+    ) -> tuple[list[ResolvedEdge], list[NodePropertyPatch]]:
         """
         Process all heritage tuples for a single file.
 
         Args:
             file_parse_data: Parse data for a single file.
         """
+        edges: list[ResolvedEdge] = []
+        patches: list[NodePropertyPatch] = []
         # Iterate through each heritage tuple in this file
         for class_name, kind, parent_name in file_parse_data.parse_result.heritage:
-            self._process_heritage_tuple(
+            edge, patch = self._process_heritage_tuple(
                 class_name=class_name,
                 kind=kind,
                 parent_name=parent_name,
                 file_path=file_parse_data.file_path,
             )
+            edges.extend(edge)
+            patches.extend(patch)
+
+        return edges, patches
 
     def _process_heritage_tuple(
         self,
@@ -140,7 +168,7 @@ class Heritage:
         kind: str,
         parent_name: str,
         file_path: str,
-    ) -> None:
+    ) -> tuple[list[ResolvedEdge], list[NodePropertyPatch]]:
         """
         Process a single heritage tuple and create a relationship if possible.
 
@@ -150,6 +178,8 @@ class Heritage:
             parent_name: Name of the parent class/interface.
             file_path: Path to the file containing this heritage declaration.
         """
+        edges: list[ResolvedEdge] = []
+        patches: list[NodePropertyPatch] = []
         # Validate the heritage kind
         rel_type = self._KIND_TO_REL.get(kind)
         if rel_type is None:
@@ -161,7 +191,7 @@ class Heritage:
             # )
             data = f"Unknown heritage kind {kind} for {class_name} in {file_path}, skipping"
             self._skipping["unknown kind"].append(data)
-            return
+            return edges, patches
 
         # Resolve both child and parent to node IDs
         child_id = self._resolve_node(class_name, file_path)
@@ -178,26 +208,29 @@ class Heritage:
             # )
             data = f"Skipping heritage {class_name} {kind} {parent_name} in {file_path}: unresolved child"
             self._skipping["unresolved child"].append(data)
-            return
+            return edges, patches
 
         # Handle unresolved parent
         if parent_id is None:
-            self._handle_unresolved_parent(
+            patches = self._handle_unresolved_parent(
                 child_id=child_id,
                 class_name=class_name,
                 kind=kind,
                 parent_name=parent_name,
                 file_path=file_path,
             )
-            return
+            return edges, patches
 
-        # Both resolved - create the heritage relationship
-        self._create_heritage_relationship(
-            child_id=child_id,
-            parent_id=parent_id,
-            rel_type=rel_type,
-            kind=kind,
+        rel_id = f"{kind}:{child_id}->{parent_id}"
+        edges.append(
+            ResolvedEdge(
+                rel_id=rel_id,
+                rel_type=rel_type,
+                source=child_id,
+                target=parent_id,
+            ),
         )
+        return edges, patches
 
     def _resolve_node(
         self,
@@ -240,7 +273,7 @@ class Heritage:
         kind: str,
         parent_name: str,
         file_path: str,
-    ) -> None:
+    ) -> list[NodePropertyPatch]:
         """
         Handle the case where a parent class cannot be resolved.
 
@@ -255,8 +288,17 @@ class Heritage:
             parent_name: Name of the unresolved parent.
             file_path: Path to the file containing this heritage declaration.
         """
+
+        patches: list[NodePropertyPatch] = []
         # Check if parent is a known protocol/ABC marker
         if parent_name in self._PROTOCOL_MARKERS:
+            patches.append(
+                NodePropertyPatch(
+                    node_id=child_id,
+                    key="is_protocol",
+                    value=True,
+                ),
+            )
             child_node = self._graph.get_node(child_id)
             if child_node is not None:
                 # Annotate the child as a protocol for dead-code detection
@@ -279,30 +321,36 @@ class Heritage:
             data = f"Skipping heritage {class_name} {kind} {parent_name} in {file_path}: unresolved parent"
             self._skipping["unresolved parent"].append(data)
 
-    def _create_heritage_relationship(
+        return patches
+
+    def _add_heritage_relationship(
         self,
-        child_id: str,
-        parent_id: str,
-        rel_type: RelType,
-        kind: str,
+        flat_edges: list[ResolvedEdge],
+        flat_patches: list[NodePropertyPatch],
     ) -> None:
         """
-        Create an EXTENDS or IMPLEMENTS relationship in the graph.
+        Add heritage relationships and node patches to the graph.
 
         Args:
-            child_id: Node ID of the child class/interface.
-            parent_id: Node ID of the parent class/interface.
-            rel_type: The relationship type (EXTENDS or IMPLEMENTS).
-            kind: The kind string for relationship ID generation.
+            flat_edges: List of resolved edges.
+            flat_patches: List of node property patches.
         """
-        # Generate unique relationship ID: "kind:child_id->parent_id"
-        rel_id = f"{kind}:{child_id}->{parent_id}"
+        for patch in flat_patches:
+            if not (node := self._graph.get_node(patch.node_id)):
+                continue
+            node.properties[patch.key] = patch.value
 
-        # Create and add the relationship to the graph
-        relationship = GraphRelationship(
-            id=rel_id,
-            type=rel_type,
-            source=child_id,
-            target=parent_id,
-        )
-        self._graph.add_relationship(relationship)
+        written: set[str] = set()
+        for edge in flat_edges:
+            if edge.rel_id in written:
+                continue
+            written.add(edge.rel_id)
+            self._graph.add_relationship(
+                GraphRelationship(
+                    id=edge.rel_id,
+                    type=edge.rel_type,
+                    source=edge.source,
+                    target=edge.target,
+                    properties=edge.properties,
+                ),
+            )

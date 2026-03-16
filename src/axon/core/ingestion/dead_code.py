@@ -10,12 +10,13 @@ setting ``is_dead = True`` on the corresponding graph node.
 from collections import defaultdict
 from logging import getLogger
 from pathlib import PurePosixPath
-from typing import cast
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, NodeLabel, RelType
 
 logger = getLogger(__name__)
+
+type DictSet = dict[str, set[str]]
 
 
 class DeadCode:
@@ -26,15 +27,11 @@ class DeadCode:
     and specific exemptions (e.g., entry points, framework decorators).
     """
 
-    _SYMBOL_LABELS: tuple[NodeLabel, ...] = (
-        NodeLabel.FUNCTION,
-        NodeLabel.METHOD,
-        NodeLabel.CLASS,
-    )
+    _SYMBOL_LABELS = NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS
 
-    _CONSTRUCTOR_NAMES: frozenset[str] = frozenset({"__init__", "__new__"})
+    _CONSTRUCTOR_NAMES = frozenset({"__init__", "__new__"})
 
-    _NON_FRAMEWORK_DECORATORS: frozenset[str] = frozenset(
+    _NON_FRAMEWORK_DECORATORS = frozenset(
         {
             "functools.wraps",
             "functools.lru_cache",
@@ -43,7 +40,7 @@ class DeadCode:
         },
     )
 
-    _FRAMEWORK_DECORATOR_NAMES: frozenset[str] = frozenset(
+    _FRAMEWORK_DECORATOR_NAMES = frozenset(
         {
             "task",
             "shared_task",
@@ -66,7 +63,7 @@ class DeadCode:
         },
     )
 
-    _TYPING_STUB_DECORATORS: frozenset[str] = frozenset(
+    _TYPING_STUB_DECORATORS = frozenset(
         {
             "overload",
             "typing.overload",
@@ -75,7 +72,7 @@ class DeadCode:
         },
     )
 
-    _ENUM_BASES: frozenset[str] = frozenset(
+    _ENUM_BASES = frozenset(
         {
             "Enum",
             "IntEnum",
@@ -93,8 +90,8 @@ class DeadCode:
             graph: The knowledge graph to analyze and mutate.
         """
         self._graph = graph
-        self._methods: list[GraphNode] = []
-        self._classes: list[GraphNode] = []
+        self._methods: list[GraphNode] = self._graph.get_nodes_by_label(NodeLabel.METHOD)
+        self._classes: list[GraphNode] = self._graph.get_nodes_by_label(NodeLabel.CLASS)
         self._un_flagged: dict[str, list[str]] = defaultdict(list)
 
     def process_dead_code(self) -> int:
@@ -107,27 +104,20 @@ class DeadCode:
             The total number of symbols initially flagged as dead minus the false
             positives cleared in subsequent passes.
         """
-        # Pre-cache nodes mapped by label to avoid repeated graph traversals
-        # which heavily improves performance during false-positive resolution.
-        self._methods = list(self._graph.get_nodes_by_label(NodeLabel.METHOD))
-        self._classes = list(self._graph.get_nodes_by_label(NodeLabel.CLASS))
-
         dead_count = self._flag_initial_dead_nodes()
 
         # Second pass: un-flag overrides of called base-class methods.
-        cleared_overrides = self._clear_override_false_positives()
-        dead_count -= cleared_overrides
+        dead_count -= self._clear_override_false_positives()
 
         # Third pass: un-flag methods on classes that structurally conform to a Protocol.
-        protocol_cleared = self._clear_protocol_conformance_false_positives()
-        dead_count -= protocol_cleared
+        dead_count -= self._clear_protocol_conformance_false_positives()
 
         # Fourth pass: un-flag Protocol class stubs (interface contracts, never called directly).
-        stub_cleared = self._clear_protocol_stub_false_positives()
-        dead_count -= stub_cleared
+        dead_count -= self._clear_protocol_stub_false_positives()
+
         self._log_un_flagged()
 
-        return dead_count
+        return max(0, dead_count)
 
     def _log_un_flagged(self) -> None:
         for label, nodes in self._un_flagged.items():
@@ -181,10 +171,10 @@ class DeadCode:
     def _is_exempt(
         self,
         name: str,
+        file_path: str = "",
         *,
         is_entry_point: bool,
         is_exported: bool,
-        file_path: str = "",
     ) -> bool:
         """Return ``True`` if the symbol is exempt from dead-code flagging."""
         return (
@@ -228,7 +218,7 @@ class DeadCode:
 
     def _has_framework_decorator(self, node: GraphNode) -> bool:
         """Return ``True`` if *node* has a framework decorator (dotted or undotted)."""
-        decorators: list[str] = cast(list[str], node.properties.get("decorators", []))
+        decorators: list[str] = node.properties.get("decorators", [])
         return any(
             dec in self._FRAMEWORK_DECORATOR_NAMES
             or ("." in dec and dec not in self._NON_FRAMEWORK_DECORATORS)
@@ -237,20 +227,17 @@ class DeadCode:
 
     def _has_property_decorator(self, node: GraphNode) -> bool:
         """Return ``True`` if *node* is a ``@property`` (accessed as attribute, not called)."""
-        decorators: list[str] = cast(list[str], node.properties.get("decorators", []))
-        return "property" in decorators
+        return "property" in node.properties.get("decorators", [])
 
     def _has_typing_stub_decorator(self, node: GraphNode) -> bool:
         """Return ``True`` if *node* is an ``@overload`` or ``@abstractmethod`` stub."""
-        decorators: list[str] = cast(list[str], node.properties.get("decorators", []))
-        return any(d in self._TYPING_STUB_DECORATORS for d in decorators)
+        return any(d in self._TYPING_STUB_DECORATORS for d in node.properties.get("decorators", []))
 
     def _is_enum_class(self, node: GraphNode, label: NodeLabel) -> bool:
         """Return ``True`` if *node* is an enum class (members accessed via dot, not called)."""
         if label != NodeLabel.CLASS:
             return False
-        bases: list[str] = cast(list[str], node.properties.get("bases", []))
-        return bool(self._ENUM_BASES & set(bases))
+        return bool(self._ENUM_BASES & set(node.properties.get("bases", [])))
 
     def _clear_override_false_positives(self) -> int:
         """
@@ -261,7 +248,7 @@ class DeadCode:
         detects that situation and clears ``is_dead`` on the override.
         """
         # Build mapping: class_name -> set of method names that are NOT dead.
-        alive_methods_by_class: dict[str, set[str]] = {}
+        alive_methods_by_class: DictSet = {}
         for method in self._methods:
             if not method.is_dead and method.class_name:
                 alive_methods_by_class.setdefault(method.class_name, set()).add(method.name)
@@ -293,62 +280,58 @@ class DeadCode:
 
     def _clear_protocol_conformance_false_positives(self) -> int:
         """Un-flag methods on classes that structurally conform to a Protocol."""
-        protocol_methods = self._get_protocol_methods()
-        if not protocol_methods:
+        class_methods = self._get_class_methods()
+
+        if not (protocol_methods := self._get_protocol_methods(class_methods)):
             return 0
 
-        class_methods = self._get_class_methods()
-        clearable = self._get_clearable_methods(protocol_methods, class_methods)
-        if not clearable:
+        if not (clearable := self._get_clearable_methods(protocol_methods, class_methods)):
             return 0
 
         cleared = 0
         for method in self._methods:
-            if method.is_dead and method.class_name:
-                names_to_clear = clearable.get(method.class_name)
-                if names_to_clear and method.name in names_to_clear:
-                    method.is_dead = False
-                    cleared += 1
-                    # logger.debug(
-                    #     "Un-flagged protocol conformance: %s.%s",
-                    #     method.class_name,
-                    #     method.name,
-                    # )
-                    self._un_flagged["protocol conformance"].append(
-                        f"{method.class_name}.{method.name}",
-                    )
+            if not (class_name := method.class_name) or not method.is_dead:
+                continue
+            if (names_to_clear := clearable.get(class_name)) and method.name in names_to_clear:
+                method.is_dead = False
+                cleared += 1
+                # logger.debug(
+                #     "Un-flagged protocol conformance: %s.%s",
+                #     method.class_name,
+                #     method.name,
+                # )
+                self._un_flagged["protocol conformance"].append(f"{class_name}.{method.name}")
 
         return cleared
 
-    def _get_protocol_methods(self) -> dict[str, set[str]]:
-        protocol_methods: dict[str, set[str]] = {}
-        for cls_node in self._classes:
-            if cls_node.properties.get("is_protocol"):
-                methods = {
-                    m.name
-                    for m in self._methods
-                    if m.class_name == cls_node.name and not self._is_dunder(m.name)
-                }
-                if methods:
-                    protocol_methods[cls_node.name] = methods
-        return protocol_methods
-
-    def _get_class_methods(self) -> dict[str, set[str]]:
-        class_methods: dict[str, set[str]] = {}
+    def _get_class_methods(self) -> DictSet:
+        class_methods: DictSet = {}
         for method in self._methods:
-            if method.class_name:
-                class_methods.setdefault(method.class_name, set()).add(method.name)
+            if not (class_name := method.class_name):
+                continue
+            class_methods.setdefault(class_name, set()).add(method.name)
         return class_methods
 
-    def _get_clearable_methods(
-        self,
-        protocol_methods: dict[str, set[str]],
-        class_methods: dict[str, set[str]],
-    ) -> dict[str, set[str]]:
-        clearable: dict[str, set[str]] = {}
+    def _get_protocol_methods(self, class_methods: DictSet) -> DictSet:
+        protocol_methods: DictSet = {}
+        for cls_node in self._classes:
+            if not cls_node.properties.get("is_protocol"):
+                continue
+            if not (non_dunder := self._non_dunder(cls_node, class_methods)):
+                continue
+            protocol_methods[cls_node.name] = non_dunder
+        return protocol_methods
+
+    def _non_dunder(self, cls_node: GraphNode, class_methods: DictSet) -> set[str]:
+        return {m for m in class_methods.get(cls_node.name, set()) if not self._is_dunder(m)}
+
+    def _get_clearable_methods(self, protocol_methods: DictSet, class_methods: DictSet) -> DictSet:
+        clearable: DictSet = {}
         for proto_name, required in protocol_methods.items():
             for cls_name, methods in class_methods.items():
-                if cls_name != proto_name and required <= methods:
+                if cls_name == proto_name:
+                    continue
+                if required <= methods:  # structural conformance
                     clearable.setdefault(cls_name, set()).update(required)
         return clearable
 

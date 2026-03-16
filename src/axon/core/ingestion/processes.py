@@ -57,6 +57,30 @@ class Processes:
     # Default maximum callees to follow per node at each level
     _DEFAULT_MAX_BRANCHING: int = 3
 
+    # TypeScript files where exports are true entry points (index/entry/app files).
+    _TS_ENTRY_SUFFIXES = (
+        "index.ts",
+        "index.tsx",
+        "index.js",
+        "index.jsx",
+        "main.ts",
+        "main.tsx",
+        "main.js",
+        "app.ts",
+        "app.tsx",
+        "app.js",
+        "server.ts",
+        "server.js",
+        "handler.ts",
+        "handler.js",
+        "route.ts",
+        "route.tsx",
+        "page.tsx",
+        "page.ts",
+        "layout.tsx",
+        "layout.ts",
+    )
+
     def __init__(self, graph: KnowledgeGraph) -> None:
         """
         Initialize the Process analyzer.
@@ -117,9 +141,10 @@ class Processes:
         # Iterate through all callable nodes and check if they're entry points
         for label in self._callable_labels:
             for node in self._graph.get_nodes_by_label(label):
-                if self._is_entry_point(node):
-                    node.is_entry_point = True
-                    entry_points.append(node)
+                if not self._is_entry_point(node):
+                    continue
+                node.is_entry_point = True
+                entry_points.append(node)
 
         return entry_points
 
@@ -143,8 +168,7 @@ class Processes:
 
         # Functions with incoming calls are not entry points
         # (they are called by something else)
-        incoming_calls = self._graph.get_incoming(node.id, RelType.CALLS)
-        if incoming_calls:
+        if self._graph.get_incoming(node.id, RelType.CALLS):
             return False
 
         # Exported functions are likely entry points
@@ -159,6 +183,9 @@ class Processes:
         return node.label == NodeLabel.FUNCTION and node.file_path.endswith(
             ("__main__.py", "cli.py", "main.py", "app.py"),
         )
+
+    def _is_ts_entry_file(self, file_path: str) -> bool:
+        return any(file_path.endswith(suffix) for suffix in self._TS_ENTRY_SUFFIXES)
 
     def _matches_framework_pattern(self, node: GraphNode) -> bool:
         """
@@ -195,7 +222,7 @@ class Processes:
             if name in ("handler", "middleware"):
                 return True
             # Exported functions are likely entry points
-            if node.is_exported:
+            if node.is_exported and self._is_ts_entry_file(node.file_path):
                 return True
 
         return False
@@ -382,8 +409,7 @@ class Processes:
 
         for step in steps:
             # Get communities this step belongs to
-            member_rels = self._graph.get_outgoing(step.id, RelType.MEMBER_OF)
-            for rel in member_rels:
+            for rel in self._graph.get_outgoing(step.id, RelType.MEMBER_OF):
                 has_any = True
                 communities.add(rel.target)
 
