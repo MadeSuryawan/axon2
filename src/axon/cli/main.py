@@ -67,14 +67,6 @@ app = Typer(
 
 _tools = Tools()
 
-# Module-level singletons to avoid typer calls in function defaults
-_REPO_OPTION = Option(
-    None,
-    "--repo",
-    "-r",
-    help="Path to the repository (defaults to auto-discovery).",
-)
-
 _PATH_ARG = Argument(Path("."), help="Path to the repository to index.")
 
 

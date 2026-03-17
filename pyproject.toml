@@ -1,3 +1,5 @@
+#:tombi schema.strict = false
+
 [project]
 name = "axoniq"
 version = "0.2.4"
@@ -67,8 +69,8 @@ dev = [
 ]
 
 [build-system]
-requires = ["uv_build>=0.9.21,<0.10.0"]
-build-backend = "uv_build"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.coverage.report]
 precision = 2
@@ -79,6 +81,24 @@ exclude_lines = [
   "def __repr__",
   "raise AssertionError",
   "raise NotImplementedError",
+]
+
+[tool.hatch.build]
+packages = ["src/axon"]
+artifacts = [
+  "src/axon/web/frontend/dist/**",
+]
+
+[tool.hatch.build.targets.wheel]
+exclude = [
+  "src/axon/web/frontend/node_modules",
+  "src/axon/web/frontend/src",
+  "src/axon/web/frontend/package.json",
+  "src/axon/web/frontend/package-lock.json",
+  "src/axon/web/frontend/tsconfig*.json",
+  "src/axon/web/frontend/vite.config.ts",
+  "src/axon/web/frontend/index.html",
+  "src/axon/web/frontend/.gitignore",
 ]
 
 [tool.pyrefly]
