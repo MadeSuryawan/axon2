@@ -14,17 +14,19 @@ from collections import deque
 from json import JSONDecodeError, loads
 from logging import getLogger
 from pathlib import Path
-from re import IGNORECASE, MULTILINE
+from re import MULTILINE
 from re import compile as re_compile
 from typing import Any, cast
 
 from axon.config.constants import MODEL_NAME, SYSTEM_EXCEPTIONS
+from axon.core.cypher_guard import WRITE_KEYWORDS, sanitize_cypher
 from axon.core.embeddings.embedder import embed_query
 from axon.core.graph.model import GraphNode
 from axon.core.ingestion.community import Community
 from axon.core.ingestion.dead_code import DeadCode
 from axon.core.search.hybrid import SearchDeps, hybrid_search
 from axon.core.storage.base import StorageBackend
+from axon.core.storage.kuzu_backend import escape_cypher as _escape_cypher
 from axon.mcp.resources import get_dead_code_list
 
 logger = getLogger(__name__)
@@ -32,15 +34,10 @@ logger = getLogger(__name__)
 # Maximum depth for impact analysis traversal (prevents runaway queries)
 MAX_TRAVERSE_DEPTH = 10
 
-
-# Regex patterns for detecting write operations in Cypher queries
-_WRITE_KEYWORDS = re_compile(
-    r"\b(DELETE|DROP|CREATE|SET|REMOVE|MERGE|DETACH|INSTALL|LOAD|COPY|CALL)\b",
-    IGNORECASE,
-)
-
 # Regex patterns for parsing git diff output
 _DIFF_FILE_PATTERN = re_compile(r"^diff --git a/(.+?) b/(.+?)$", MULTILINE)
+
+# Regex pattern for parsing git diff hunk headers
 _DIFF_HUNK_PATTERN = re_compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", MULTILINE)
 
 # Human-readable labels for impact analysis depth levels
@@ -74,20 +71,7 @@ class _Helpers:
     # =============================================================================
 
     @staticmethod
-    def _escape_cypher(value: str) -> str:
-        """
-        Escape a string for safe inclusion in a Cypher string literal.
-
-        Args:
-            value: The string to escape.
-
-        Returns:
-            The escaped string safe for Cypher queries.
-        """
-        return value.replace("\\", "\\\\").replace("'", "\\'")
-
-    @staticmethod
-    def confidence_tag(confidence: float) -> str:
+    def _confidence_tag(confidence: float) -> str:
         """
         Return a visual confidence indicator for edge display.
 
@@ -118,10 +102,10 @@ class _Helpers:
         Returns:
             List of search results.
         """
-        if hasattr(storage, "exact_name_search"):
-            results = storage.exact_name_search(symbol, limit=1)
-            if results:
-                return results
+        if hasattr(storage, "exact_name_search") and (
+            results := storage.exact_name_search(symbol, limit=1)
+        ):
+            return results
         return storage.fts_search(symbol, limit=1)
 
     @staticmethod
@@ -155,14 +139,14 @@ class _Helpers:
 
         groups: dict[str, list] = {}
         for r in results:
-            pname = node_to_process.get(r.node_id)
-            if pname:
-                groups.setdefault(pname, []).append(r)
+            if not (pname := node_to_process.get(r.node_id)):
+                continue
+            groups.setdefault(pname, []).append(r)
 
         return groups
 
     @staticmethod
-    def format_query_results(results: list, groups: dict[str, list]) -> str:
+    def _format_query_results(results: list, groups: dict[str, list]) -> str:
         """
         Format search results with process grouping.
 
@@ -432,16 +416,15 @@ class _Helpers:
 
         # Get callers with confidence scores, using fallback for older backends
         # that don't support confidence tracking
-        callers_raw = self._get_callers_with_fallback(storage, node.id)
+        if not (callers_raw := self._get_callers_with_fallback(storage, node.id)):
+            return lines
 
-        # Only add section if callers exist
-        if callers_raw:
-            lines.append(f"\nCallers ({len(callers_raw)}):")
-            # Format each caller with name, location, and confidence indicator
-            for c, conf in callers_raw:
-                # confidence_tag returns visual indicator based on confidence level
-                tag = self.confidence_tag(conf)
-                lines.append(f"  -> {c.name}  {c.file_path}:{c.start_line}{tag}")
+        lines.append(f"\nCallers ({len(callers_raw)}):")
+        # Format each caller with name, location, and confidence indicator
+        for c, conf in callers_raw:
+            # confidence_tag returns visual indicator based on confidence level
+            tag = self._confidence_tag(conf)
+            lines.append(f"  -> {c.name}  {c.file_path}:{c.start_line}{tag}")
 
         return lines
 
@@ -466,13 +449,13 @@ class _Helpers:
         lines: list[str] = []
 
         # Get callees with confidence scores, using fallback for older backends
-        callees_raw = self._get_callees_with_fallback(storage, node.id)
+        if not (callees_raw := self._get_callees_with_fallback(storage, node.id)):
+            return lines
 
-        if callees_raw:
-            lines.append(f"\nCallees ({len(callees_raw)}):")
-            for c, conf in callees_raw:
-                tag = self.confidence_tag(conf)
-                lines.append(f"  -> {c.name}  {c.file_path}:{c.start_line}{tag}")
+        lines.append(f"\nCallees ({len(callees_raw)}):")
+        for c, conf in callees_raw:
+            tag = self._confidence_tag(conf)
+            lines.append(f"  -> {c.name}  {c.file_path}:{c.start_line}{tag}")
 
         return lines
 
@@ -497,12 +480,12 @@ class _Helpers:
         lines: list[str] = []
 
         # Query type references directly from storage
-        type_refs = storage.get_type_refs(node.id)
+        if not (type_refs := storage.get_type_refs(node.id)):
+            return lines
 
-        if type_refs:
-            lines.append(f"\nType references ({len(type_refs)}):")
-            for t in type_refs:
-                lines.append(f"  -> {t.name}  {t.file_path}")
+        lines.append(f"\nType references ({len(type_refs)}):")
+        for t in type_refs:
+            lines.append(f"  -> {t.name}  {t.file_path}")
 
         return lines
 
@@ -528,7 +511,7 @@ class _Helpers:
 
         # Escape the node ID to prevent Cypher injection attacks
         # This is critical when interpolating user input into queries
-        escaped_id = self._escape_cypher(node.id)
+        escaped_id = _escape_cypher(node.id)
 
         # Execute raw Cypher query to find heritage relationships
         # Looking for CodeRelation edges with type 'extends' or 'implements'
@@ -580,7 +563,7 @@ class _Helpers:
             return lines
 
         # Escape the file path to prevent Cypher injection
-        escaped_fp = self._escape_cypher(node.file_path)
+        escaped_fp = _escape_cypher(node.file_path)
 
         # Query for files that import this file (reverse imports relationship)
         import_rows = (
@@ -680,7 +663,7 @@ class _Helpers:
         try:
             # Query for nodes in this file
             rows = storage.execute_raw(
-                f"MATCH (n) WHERE n.file_path = '{self._escape_cypher(file_path)}' "
+                f"MATCH (n) WHERE n.file_path = '{_escape_cypher(file_path)}' "
                 f"AND n.start_line > 0 "
                 f"RETURN n.id, n.name, n.file_path, n.start_line, n.end_line",
             )
@@ -738,8 +721,6 @@ class _Helpers:
         if not _SAFE_PATH.match(file_path):
             return "Error: file path contains unsafe characters."
 
-        return None
-
     # =============================================================================
     # Helpers for handle_call_path
     # =============================================================================
@@ -796,13 +777,11 @@ class _Helpers:
             Error message string if resolution fails for either symbol.
         """
         # Resolve the source symbol
-        from_results = self._resolve_symbol(storage, from_symbol)
-        if not from_results:
+        if not (from_results := self._resolve_symbol(storage, from_symbol)):
             return f"Source symbol '{from_symbol}' not found."
 
         # Resolve the target symbol
-        to_results = self._resolve_symbol(storage, to_symbol)
-        if not to_results:
+        if not (to_results := self._resolve_symbol(storage, to_symbol)):
             return f"Target symbol '{to_symbol}' not found."
 
         # Retrieve actual nodes from storage using resolved node IDs
@@ -923,7 +902,7 @@ class _Helpers:
         # Walk backwards from target to source using parent map
         # parent_map.get(node_id) returns None when we reach the source
         # (which has no parent in the map)
-        while node_id is not None:
+        while node_id:
             path_ids.append(node_id)
             node_id = parent_map.get(node_id)
 
@@ -966,18 +945,16 @@ class _Helpers:
         # Enumerate starting at 1 for human-readable line numbers
         for i, nid in enumerate(path_ids, 1):
             # Retrieve full node details from storage
-            node = storage.get_node(nid)
-
-            if node:
+            if node := storage.get_node(nid):
                 # Format node with name, type label, file path, and line number
                 label = node.label.value.title() if node.label else "Unknown"
                 path_names.append(node.name)
                 lines.append(f"  {i}. {node.name} ({label}) — {node.file_path}:{node.start_line}")
-            else:
-                # Fallback for nodes that couldn't be retrieved
-                # (might happen with deleted or invalid nodes)
-                path_names.append(nid)
-                lines.append(f"  {i}. {nid}")
+                continue
+            # Fallback for nodes that couldn't be retrieved
+            # (might happen with deleted or invalid nodes)
+            path_names.append(nid)
+            lines.append(f"  {i}. {nid}")
 
         # Build header with path visualization and hop count
         # Handle singular/plural for "hop" vs "hops"
@@ -1032,13 +1009,11 @@ class _Helpers:
             The resolved GraphNode if found, None otherwise.
         """
         # Perform full-text search to find the symbol
-        results = self._resolve_symbol(storage, symbol)
-        if not results:
-            return None
+        if not (results := self._resolve_symbol(storage, symbol)):
+            return
 
         # Retrieve the actual node from storage using the node_id from search results
-        node = storage.get_node(results[0].node_id)
-        return node
+        return storage.get_node(results[0].node_id)
 
     def _format_explanation_header(self, node: GraphNode) -> list[str]:
         """
@@ -1144,7 +1119,7 @@ class _Helpers:
 
         # Escape the node ID to prevent Cypher injection attacks
         # This is critical when interpolating user input into queries
-        escaped_id = self._escape_cypher(node.id)
+        escaped_id = _escape_cypher(node.id)
 
         # Query for community membership using MEMBER_OF relationship
         # Returns community name if the symbol belongs to a detected community
@@ -1241,7 +1216,7 @@ class _Helpers:
         lines: list[str] = []
 
         # Escape the node ID to prevent Cypher injection attacks
-        escaped_id = self._escape_cypher(node.id)
+        escaped_id = _escape_cypher(node.id)
 
         # Query for process membership using STEP_IN_PROCESS relationship
         # Returns process names that this symbol participates in
@@ -1310,7 +1285,7 @@ class _Helpers:
                 continue
 
             # Escape file path for safe inclusion in Cypher query
-            escaped = self._escape_cypher(file_path)
+            escaped = _escape_cypher(file_path)
 
             # Query for symbols defined in this file
             # Filters to only symbols with valid line numbers (start_line > 0)
@@ -1335,8 +1310,7 @@ class _Helpers:
 
                 # Check if any changed range overlaps with this symbol's definition
                 # Line overlap: symbol starts before range ends AND ends after range starts
-                hit = any(start_line <= end and end_line >= start for start, end in ranges)
-                if not hit:
+                if not any(start_line <= end and end_line >= start for start, end in ranges):
                     continue
 
                 # Retrieve full node for additional properties
@@ -1391,7 +1365,7 @@ class _Helpers:
                 continue
 
             # Escape file path for safe Cypher query
-            escaped = self._escape_cypher(file_path)
+            escaped = _escape_cypher(file_path)
 
             # Query COUPLED_WITH relationships for this file
             # Only includes couplings with strength >= 0.5 (significant coupling)
@@ -1444,7 +1418,7 @@ class _Helpers:
         for name, label, file_path, _ in all_affected_symbols:
             # Construct the node ID in the format used in the graph
             # Format: "label:file_path:name" (lowercase label)
-            escaped = self._escape_cypher(f"{label.lower()}:{file_path}:{name}")
+            escaped = _escape_cypher(f"{label.lower()}:{file_path}:{name}")
 
             # Query for community membership via MEMBER_OF relationship
             comm_rows = (
@@ -2037,7 +2011,7 @@ class _Helpers:
                     continue
 
                 # Escape file path for safe Cypher query
-                escaped = self._escape_cypher(file_path)
+                escaped = _escape_cypher(file_path)
 
                 # Query for symbols defined in this file
                 # Filters to only symbols with valid line numbers (start_line > 0)
@@ -2059,20 +2033,19 @@ class _Helpers:
 
                     # Check if any changed range overlaps with this symbol's definition
                     # Line overlap: symbol starts before range ends AND ends after range starts
-                    hit = any(start_line <= end and end_line >= start for start, end in ranges)
-                    if hit:
-                        changed_symbol_ids.append((node_id, name))
+                    if not any(start_line <= end and end_line >= start for start, end in ranges):
+                        continue
+
+                    changed_symbol_ids.append((node_id, name))
 
         # If no diff provided, try resolving symbols from the symbol list
         elif symbols:
             for sym_name in symbols:
                 # Resolve symbol name to graph node using full-text search
-                results = self._resolve_symbol(storage, sym_name)
-                if results:
-                    # Retrieve the full node to get the node ID
-                    node = storage.get_node(results[0].node_id)
-                    if node:
-                        changed_symbol_ids.append((node.id, node.name))
+                if (results := self._resolve_symbol(storage, sym_name)) and (
+                    node := storage.get_node(results[0].node_id)
+                ):
+                    changed_symbol_ids.append((node.id, node.name))
 
         return changed_symbol_ids
 
@@ -2111,11 +2084,11 @@ class _Helpers:
             # direction="callers" finds symbols that call this symbol
             for caller, depth in storage.traverse_with_depth(sym_id, 4, direction="callers"):
                 # Check if the caller is from a test file
-                if DeadCode(storage.load_graph())._is_test_file(caller.file_path):
-                    # Add to test hits: track which test calls which changed symbol
-                    test_hits.setdefault(caller.file_path, []).append(
-                        (caller.name, sym_name, depth),
-                    )
+                if not DeadCode(storage.load_graph())._is_test_file(caller.file_path):
+                    continue
+
+                # Add to test hits: track which test calls which changed symbol
+                test_hits.setdefault(caller.file_path, []).append((caller.name, sym_name, depth))
 
         return test_hits
 
@@ -2193,9 +2166,11 @@ class _Helpers:
                 seen = set()
                 for test_name, source_sym, _ in hits:
                     key = (test_name, source_sym)
-                    if key not in seen:
-                        seen.add(key)
-                        lines.append(f"    - {test_name} (calls: {source_sym})")
+                    if key in seen:
+                        continue
+
+                    seen.add(key)
+                    lines.append(f"    - {test_name} (calls: {source_sym})")
             lines.append("")
 
         # Format transitive (indirect) test coverage section
@@ -2207,9 +2182,11 @@ class _Helpers:
                 seen = set()
                 for test_name, source_sym, _ in hits:
                     key = (test_name, source_sym)
-                    if key not in seen:
-                        seen.add(key)
-                        lines.append(f"    - {test_name} (transitive via: {source_sym})")
+                    if key in seen:
+                        continue
+
+                    seen.add(key)
+                    lines.append(f"    - {test_name} (transitive via: {source_sym})")
 
         return "\n".join(lines)
 
@@ -2235,10 +2212,8 @@ class _Helpers:
         """
         # Query community members from the graph database
         # Using MEMBER_OF relationship to connect symbols to their community
-        rows = self._query_community_members(storage, community)
-
-        # Handle case where community doesn't exist or has no members
-        if not rows:
+        if not (rows := self._query_community_members(storage, community)):
+            # Handle case where community doesn't exist or has no members
             return f"Community '{community}' not found or has no members."
 
         # Format the retrieved members into readable output
@@ -2266,7 +2241,7 @@ class _Helpers:
         """
         # Escape community name to prevent Cypher injection attacks
         # This is critical when interpolating user input into queries
-        escaped = self._escape_cypher(community)
+        escaped = _escape_cypher(community)
 
         # Execute Cypher query to find all symbols that are members of this community
         # ORDER BY ensures consistent, predictable output for users
@@ -2354,11 +2329,9 @@ class _Helpers:
         """
         # Query all communities from the database
         # Returns community name, cohesion score, and properties JSON
-        rows = self._query_all_communities(storage)
-
-        # Handle case where no communities have been detected
-        # This can happen if community detection was not enabled during indexing
-        if not rows:
+        if not (rows := self._query_all_communities(storage)):
+            # Handle case where no communities have been detected
+            # This can happen if community detection was not enabled during indexing
             return "No communities detected. Run indexing with community detection enabled."
 
         # Build output lines starting with header showing total count
@@ -2379,12 +2352,8 @@ class _Helpers:
             # Format community line with name, cohesion score, and member count
             lines.append(f"  {i}. {name}  (cohesion: {cohesion:.2f}, {symbol_count} symbols)")
 
-        # Query and append cross-community processes information
-        # These are processes that span multiple communities
-        cross_procs = self._query_cross_community_processes(storage)
-
         # Add cross-community processes section if any exist
-        if cross_procs:
+        if cross_procs := self._query_cross_community_processes(storage):
             lines.append("")
             lines.append("Cross-community processes:")
             lines.extend(self._format_cross_community_processes(cross_procs))
@@ -2439,9 +2408,7 @@ class _Helpers:
 
         # Extract symbol_count from parsed properties
         # Default to '?' if not present in the JSON
-        symbol_count = props.get("symbol_count", "?")
-
-        return symbol_count
+        return props.get("symbol_count", "?")
 
     def _query_cross_community_processes(self, storage: StorageBackend) -> list[list[Any]]:
         """
@@ -2607,7 +2574,7 @@ class Tools(_Helpers):
 
         # Group results by process and format output
         groups = self._group_by_process(results, storage)
-        return self.format_query_results(results, groups)
+        return self._format_query_results(results, groups)
 
     def handle_context(self, storage: StorageBackend, symbol: str) -> str:
         """
@@ -2659,8 +2626,7 @@ class Tools(_Helpers):
 
         # Step 2: Resolve symbol to a node in the graph
         # Uses full-text search to find the symbol; returns error if not found
-        node = self._resolve_symbol_to_node(storage, symbol)
-        if node is None:
+        if not (node := self._resolve_symbol_to_node(storage, symbol)):
             return f"Symbol '{symbol}' not found."
 
         # Step 3: Build the context output by collecting all sections
@@ -2716,12 +2682,10 @@ class Tools(_Helpers):
         depth = max(1, min(depth, self._MAX_TRAVERSE_DEPTH))
 
         # Resolve symbol to starting node
-        results = self._resolve_symbol(storage, symbol)
-        if not results:
+        if not (results := self._resolve_symbol(storage, symbol)):
             return f"Symbol '{symbol}' not found."
 
-        start_node = storage.get_node(results[0].node_id)
-        if not start_node:
+        if not (start_node := storage.get_node(results[0].node_id)):
             return f"Symbol '{symbol}' not found."
 
         # Traverse to find affected symbols
@@ -2797,9 +2761,7 @@ class Tools(_Helpers):
             return "Empty diff provided."
 
         # Parse diff to extract changed files and line ranges
-        changed_files = self._parse_diff(diff)
-
-        if not changed_files:
+        if not (changed_files := self._parse_diff(diff)):
             return "Could not parse any changed files from the diff."
 
         # Query storage for each changed file with path validation
@@ -2819,8 +2781,9 @@ class Tools(_Helpers):
         Returns:
             Formatted query results, or an error message if execution fails.
         """
-        # Reject write operations for safety
-        if _WRITE_KEYWORDS.search(query):
+        # Strip comments so write keywords hidden inside comment blocks are detected.
+        cleaned_query = sanitize_cypher(query)
+        if WRITE_KEYWORDS.search(cleaned_query):
             return (
                 "Query rejected: only read-only queries (MATCH/RETURN) are allowed. "
                 "Write operations (DELETE, DROP, CREATE, SET, MERGE) are not permitted."
@@ -2875,7 +2838,7 @@ class Tools(_Helpers):
         if not _SAFE_PATH.match(file_path):
             return "Error: file path contains unsafe characters."
 
-        escaped = self._escape_cypher(file_path)
+        escaped = _escape_cypher(file_path)
         rows = (
             storage.execute_raw(
                 f"MATCH (a:File)-[r:COUPLED_WITH]-(b:File) "
@@ -2886,9 +2849,7 @@ class Tools(_Helpers):
             or []
         )
 
-        rows = [r for r in rows if (r[1] or 0) >= min_strength]
-
-        if not rows:
+        if not (rows := [r for r in rows if (r[1] or 0) >= min_strength]):
             return f"No temporal coupling found for '{file_path}' (min strength: {min_strength})."
 
         # Get explicit imports for comparison
@@ -2918,8 +2879,7 @@ class Tools(_Helpers):
             )
 
         lines.append("")
-        hidden = [r[0] for r in rows if r[0] not in imported_files]
-        if hidden:
+        if hidden := [r[0] for r in rows if r[0] not in imported_files]:
             lines.append(
                 f"⚠️ {len(hidden)} file(s) have hidden dependencies (no static import).",
             )
@@ -2989,8 +2949,7 @@ class Tools(_Helpers):
         """
         # Step 1: Validate input parameters - both symbols must be non-empty
         # This prevents unnecessary database queries for invalid input
-        validation_error = self._validate_call_path_inputs(from_symbol, to_symbol)
-        if validation_error:
+        if validation_error := self._validate_call_path_inputs(from_symbol, to_symbol):
             return validation_error
 
         # Step 2: Clamp max_depth to valid range [1, MAX_TRAVERSE_DEPTH]
@@ -2999,12 +2958,12 @@ class Tools(_Helpers):
 
         # Step 3: Resolve both symbols to graph nodes
         # Returns error if either symbol cannot be found in the graph
-        resolution_result = self._resolve_symbols_for_call_path(storage, from_symbol, to_symbol)
-        if isinstance(resolution_result, str):
+        res_result = self._resolve_symbols_for_call_path(storage, from_symbol, to_symbol)
+        if isinstance(res_result, str):
             # Error occurred during resolution (returned as error string)
-            return resolution_result
+            return res_result
 
-        src_node, tgt_node = resolution_result
+        src_node, tgt_node = res_result
 
         # Step 4: Check if source and target are the same symbol
         # This is a trivial case - no traversal needed
@@ -3078,14 +3037,12 @@ class Tools(_Helpers):
         """
         # Step 1: Validate symbol parameter - ensure it's non-empty
         # This prevents unnecessary database queries for invalid input
-        validation_error = self._validate_symbol_input(symbol)
-        if validation_error:
+        if validation_error := self._validate_symbol_input(symbol):
             return validation_error
 
         # Step 2: Resolve symbol to a node in the graph
         # Uses full-text search to find the symbol; returns error if not found
-        node = self._resolve_symbol_for_explain(storage, symbol)
-        if node is None:
+        if not (node := self._resolve_symbol_for_explain(storage, symbol)):
             return f"Symbol '{symbol}' not found."
 
         # Step 3: Build the explanation output by collecting all sections
@@ -3167,8 +3124,7 @@ class Tools(_Helpers):
 
         # Step 2: Parse the diff to extract changed files and line ranges
         # Returns dict mapping file_path -> list of (start_line, end_line) tuples
-        changed_files = self._parse_diff(diff)
-        if not changed_files:
+        if not (changed_files := self._parse_diff(diff)):
             return "Could not parse any changed files from the diff."
 
         # Convert to set for efficient O(1) lookup when checking co-changes
@@ -3262,13 +3218,12 @@ class Tools(_Helpers):
         """
         # Step 1: Validate file_path parameter - ensure it's non-empty and safe
         # This prevents unnecessary database queries for invalid input
-        validation_error = self._validate_file_path_input(file_path)
-        if validation_error:
+        if validation_error := self._validate_file_path_input(file_path):
             return validation_error
 
         # Clean and escape the file path for safe Cypher query usage
         file_path = file_path.strip()
-        escaped = self._escape_cypher(file_path)
+        escaped = _escape_cypher(file_path)
 
         # Step 2: Query all context data from the storage backend
         # Each query fetches a different aspect of file context
@@ -3422,11 +3377,8 @@ class Tools(_Helpers):
 
         # Step 2: Extract or resolve changed symbols from the provided input
         # Changed symbols are stored as tuples of (node_id, symbol_name)
-        changed_symbol_ids = self._extract_changed_symbols(storage, diff, symbols)
-
-        # Check if any changed symbols were found
-        # If none found, return early with informative message
-        if not changed_symbol_ids:
+        if not (changed_symbol_ids := self._extract_changed_symbols(storage, diff, symbols)):
+            # If none found, return early with informative message
             return "No changed symbols found."
 
         # Step 3: Find test files in the call graph of changed symbols

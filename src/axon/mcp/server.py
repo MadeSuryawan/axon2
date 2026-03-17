@@ -16,11 +16,15 @@ Usage::
 """
 
 from asyncio import Lock, run, to_thread
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from logging import getLogger
 from pathlib import Path
 
 from mcp.server import Server
+from mcp.server.fastmcp.server import StreamableHTTPASGIApp
 from mcp.server.stdio import stdio_server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Resource, TextContent, Tool
 from pydantic import AnyUrl
 
@@ -34,42 +38,72 @@ server = Server("axon")
 
 _storage: KuzuBackend | None = None
 _lock: Lock | None = None
-
+_db_path: Path | None = None
 
 _tools = Tools()
 
 
+def _resolve_db_path() -> Path:
+    global _db_path
+    if _db_path is None:
+        _db_path = Path.cwd() / ".axon" / "kuzu"
+    return _db_path
+
+
 def set_storage(storage: KuzuBackend) -> None:
     """Inject a pre-initialised storage backend (e.g. from ``axon serve --watch``)."""
-    global _storage  # noqa: PLW0603
+    global _storage
     _storage = storage
 
 
 def set_lock(lock: Lock) -> None:
     """Inject a shared lock for coordinating storage access with the file watcher."""
-    global _lock  # noqa: PLW0603
+    global _lock
     _lock = lock
 
 
-def _get_storage() -> KuzuBackend:
+@contextmanager
+def _open_storage() -> Iterator[KuzuBackend]:
     """
-    Lazily initialise and return the KuzuDB storage backend.
+    Open a short-lived read-only connection for a single tool/resource call.
 
-    Looks for a ``.axon/kuzu`` directory in the current working directory.
-    If it exists, the backend is initialised from that path.  Otherwise a
-    bare (uninitialised) backend is returned so that tools can still be
-    called without crashing.
+    Used when no persistent storage was injected (read-only fallback mode).
+    Each call gets a fresh connection that sees the latest on-disk data and
+    releases the file lock immediately after the query completes.
     """
-    global _storage  # noqa: PLW0603
-    if _storage is None:
-        _storage = KuzuBackend()
-        db_path = Path.cwd() / ".axon" / "kuzu"
-        if db_path.exists():
-            _storage.initialize(db_path, read_only=True)
-            logger.info("Initialised storage (read-only) from %s", db_path)
-        else:
-            logger.warning("No .axon/kuzu directory found in %s", Path.cwd())
-    return _storage
+    db_path = _resolve_db_path()
+    if not db_path.exists():
+        details = f"No .axon/kuzu directory in {db_path.parent.parent}"
+        raise FileNotFoundError(details)
+    storage = KuzuBackend()
+    storage.initialize(db_path, read_only=True, max_retries=3, retry_delay=0.3)
+    try:
+        yield storage
+    finally:
+        storage.close()
+
+
+def _run(fn: Callable[[KuzuBackend], dict[str, str]]) -> dict[str, str]:
+    with _open_storage() as st:
+        return fn(st)
+
+
+async def _with_storage(fn: Callable[[KuzuBackend], dict[str, str]]) -> dict[str, str]:
+    """
+    Run *fn* against the appropriate storage backend.
+
+    Uses the injected persistent backend when available (with optional
+    async lock), otherwise opens a short-lived read-only connection.
+    """
+
+    if not _storage:
+        return await to_thread(_run, fn)
+
+    if not _lock:
+        return await to_thread(fn, _storage)
+
+    async with _lock:
+        return await to_thread(fn, _storage)
 
 
 TOOLS: list[Tool] = [
@@ -209,6 +243,30 @@ def _dispatch_tool(name: str, arguments: dict, storage: KuzuBackend) -> dict[str
         "axon_dead_code": _tools.handle_dead_code(storage),
         "axon_detect_changes": _tools.handle_detect_changes(storage, arguments.get("diff", "")),
         "axon_cypher": _tools.handle_cypher(storage, arguments.get("query", "")),
+        "axon_coupling": _tools.handle_coupling(
+            storage,
+            arguments.get("file_path", ""),
+            min_strength=arguments.get("min_strength", 0.3),
+        ),
+        "axon_communities": _tools.handle_communities(
+            storage,
+            community=arguments.get("community"),
+        ),
+        "axon_explain": _tools.handle_explain(storage, arguments.get("symbol", "")),
+        "axon_review_risk": _tools.handle_review_risk(storage, arguments.get("diff", "")),
+        "axon_call_path": _tools.handle_call_path(
+            storage,
+            arguments.get("from_symbol", ""),
+            arguments.get("to_symbol", ""),
+            max_depth=arguments.get("max_depth", 10),
+        ),
+        "axon_file_context": _tools.handle_file_context(storage, arguments.get("file_path", "")),
+        "axon_test_impact": _tools.handle_test_impact(
+            storage,
+            diff=arguments.get("diff", ""),
+            symbols=arguments.get("symbols"),
+        ),
+        "axon_cycles": _tools.handle_cycles(storage, min_size=arguments.get("min_size", 2)),
         "unknown": f"Unknown tool: {name}",
     }
 
@@ -216,14 +274,13 @@ def _dispatch_tool(name: str, arguments: dict, storage: KuzuBackend) -> dict[str
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Dispatch a tool call to the appropriate handler."""
-    storage = _get_storage()
+    try:
+        result = await _with_storage(lambda st: _dispatch_tool(name, arguments, st))
+    except Exception as exc:
+        logger.exception("Tool %s raised an unhandled exception", name)
+        result = {"unknown": f"Internal error: {exc}"}
 
-    if _lock:
-        async with _lock:
-            _dict = await to_thread(_dispatch_tool, name, arguments, storage)
-            return [TextContent(type="text", text=_dict[name])]
-
-    return [TextContent(type="text", text=_dispatch_tool(name, arguments, storage)[name])]
+    return [TextContent(type="text", text=result.get(name, f"Unknown tool: {name}"))]
 
 
 @server.list_resources()
@@ -251,33 +308,34 @@ async def list_resources() -> list[Resource]:
     ]
 
 
-def _dispatch_resource(uri_str: str, storage: KuzuBackend) -> str:
+def _dispatch_resource(uri_str: str, storage: KuzuBackend) -> dict[str, str]:
     """Synch resource dispatch."""
-    if uri_str == "axon://overview":
-        return get_overview(storage)
-    if uri_str == "axon://dead-code":
-        return get_dead_code_list(storage)
-    if uri_str == "axon://schema":
-        return get_schema()
-    return f"Unknown resource: {uri_str}"
+    return {
+        "axon://overview": get_overview(storage),
+        "axon://dead-code": get_dead_code_list(storage),
+        "axon://schema": get_schema(),
+        "unknown": f"Unknown resource: {uri_str}",
+    }
 
 
 @server.read_resource()
 async def read_resource(uri: AnyUrl) -> str:
     """Read the contents of an Axon resource."""
-    storage = _get_storage()
     uri_str = str(uri)
-
-    if _lock is not None:
-        async with _lock:
-            return await to_thread(_dispatch_resource, uri_str, storage)
-    return _dispatch_resource(uri_str, storage)
+    result = await _with_storage(lambda st: _dispatch_resource(uri_str, st))
+    return result.get(uri_str, result["unknown"])
 
 
 async def main() -> None:
     """Run the Axon MCP server over stdio transport."""
     async with stdio_server() as (read, write):
         await server.run(read, write, server.create_initialization_options())
+
+
+def create_streamable_http_app() -> tuple[StreamableHTTPSessionManager, StreamableHTTPASGIApp]:
+    """Create a streamable HTTP transport for the existing MCP server."""
+    session_manager = StreamableHTTPSessionManager(app=server)
+    return session_manager, StreamableHTTPASGIApp(session_manager)
 
 
 if __name__ == "__main__":
