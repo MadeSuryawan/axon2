@@ -13,7 +13,7 @@ from rich.logging import RichHandler
 from rich.traceback import install
 from typer import Argument, Context, Exit, Option, Typer, confirm
 
-from axon.cli.helpers.db_check import (
+from axon.cli.helpers.checker import (
     _FALSE,
     check_meta_json,
     get_kuzu,
@@ -23,16 +23,7 @@ from axon.cli.helpers.db_check import (
     report,
     version_callback,
 )
-from axon.cli.helpers.host import (
-    DEFAULT_MANAGED_PORT,
-    HostConfig,
-    create_host_lease,
-    ensure_host_running,
-    maybe_notify_update,
-    proxy_stdio_to_http_mcp,
-    remove_host_lease,
-    run_ui,
-)
+from axon.cli.helpers.host_runner import DEFAULT_MANAGED_PORT, HostConfig, HostRunner, RunnerConfig
 from axon.core.diff import diff_branches, format_diff
 from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.mcp.server import main as mcp_main
@@ -94,7 +85,7 @@ def main(
     ),
 ) -> None:
     """Axon — Graph-powered code intelligence engine."""
-    maybe_notify_update(ctx.invoked_subcommand)
+    HostRunner(RunnerConfig()).maybe_notify_update(ctx.invoked_subcommand)
 
 
 @app.command()
@@ -326,20 +317,21 @@ def serve(
 
     repo_path = Path.cwd().resolve()
     lease_path: Path | None = None
+    runner = HostRunner(RunnerConfig(port=DEFAULT_MANAGED_PORT, watch=True, managed=True))
     try:
-        live_host = ensure_host_running(
+        live_host = runner.ensure_host_running(
             repo_path,
             HostConfig(port=DEFAULT_MANAGED_PORT, watch=True, managed=True),
         )
-        lease_path = create_host_lease(repo_path, "mcp")
+        lease_path = runner.create_host_lease(repo_path, "mcp")
     except RuntimeError as exc:
         rprint(f"[red]Error: {exc}")
         raise Exit(code=1) from exc
 
     try:
-        asyncio_run(proxy_stdio_to_http_mcp(live_host["mcp_url"]))
+        asyncio_run(HostRunner.proxy_stdio_to_http_mcp(live_host["mcp_url"]))
     finally:
-        remove_host_lease(lease_path)
+        runner.remove_host_lease(lease_path)
 
 
 @app.command()
@@ -375,13 +367,16 @@ def ui(
         dev: Enable dev mode to proxy to Vite dev server for HMR.
         direct: Force standalone UI mode, bypassing shared host detection.
     """
-    run_ui(
-        port=port,
-        no_open=no_open,
-        watch_files=watch_files,
-        dev=dev,
-        direct=direct,
+    runner = HostRunner(
+        RunnerConfig(
+            port=port,
+            no_open=no_open,
+            watch=watch_files,
+            dev=dev,
+            direct=direct,
+        ),
     )
+    runner.run_ui()
 
 
 if __name__ == "__main__":
