@@ -381,7 +381,7 @@ def _is_host_alive(meta: dict, repo_path: Path) -> bool:
         return False
 
 
-def get_live_host_info(repo_path: Path) -> dict | None:
+def _get_live_host_info(repo_path: Path) -> dict | None:
     meta = _read_host_meta(repo_path)
     if meta is None:
         return None
@@ -437,7 +437,7 @@ def ensure_host_running(
     if config is None:
         config = HostConfig()
 
-    live_host = get_live_host_info(repo_path)
+    live_host = _get_live_host_info(repo_path)
     if live_host is not None:
         return live_host
 
@@ -450,7 +450,7 @@ def ensure_host_running(
     )
     deadline = time() + config.timeout_seconds
     while time() < deadline:
-        live_host = get_live_host_info(repo_path)
+        live_host = _get_live_host_info(repo_path)
         if live_host is not None:
             return live_host
         sleep(0.2)
@@ -508,7 +508,7 @@ def _check_existing_host(
 
     Returns True if a host is running (and was handled), False otherwise.
     """
-    live_host = get_live_host_info(repo_path)
+    live_host = _get_live_host_info(repo_path)
     if live_host is not None:
         console.print(already_running_message.format(url=live_host["host_url"]))
         if open_browser and not no_open:
@@ -674,7 +674,7 @@ def _cleanup_host(repo_path: Path, storage: KuzuBackend) -> None:
 # ==================== UI Helper Functions ====================
 
 
-def check_db_exists(repo_path: Path) -> Path | None:
+def _check_db_exists(repo_path: Path) -> Path | None:
     """
     Check if the database exists and return the db_path, or None if not found.
 
@@ -688,7 +688,7 @@ def check_db_exists(repo_path: Path) -> Path | None:
     return db_path if db_path.exists() else None
 
 
-def run_ui_proxy_to_host(
+def _run_ui_proxy_to_host(
     live_host: dict,
     port: int,
     *,
@@ -806,7 +806,7 @@ async def _run_ui_with_watcher(
     )
 
 
-def run_standalone_ui(
+def _run_standalone_ui(
     repo_path: Path,
     port: int,
     *,
@@ -827,7 +827,7 @@ def run_standalone_ui(
         no_open: Whether to skip auto-opening the browser.
     """
 
-    db_path = check_db_exists(repo_path)
+    db_path = _check_db_exists(repo_path)
     if db_path is None:
         console.print(
             "[red]Error:[/red] No index found. Run [cyan]axon analyze .[/cyan] first to index this codebase.",
@@ -846,7 +846,7 @@ def run_standalone_ui(
         uvicorn_run(web_app, host="127.0.0.1", port=port, log_level="warning")
 
 
-def check_live_host_for_ui(
+def _check_live_host_for_ui(
     repo_path: Path,
     *,
     no_open: bool,
@@ -868,7 +868,7 @@ def check_live_host_for_ui(
     Returns:
         True if a host (or proxy) was started, False if no host exists.
     """
-    live_host = get_live_host_info(repo_path)
+    live_host = _get_live_host_info(repo_path)
     if live_host is not None:
         if live_host.get("ui_enabled", True):
             # Host is running with UI - connect directly
@@ -879,13 +879,12 @@ def check_live_host_for_ui(
             return True
         else:
             # Host exists but no UI - run proxy
-            run_ui_proxy_to_host(live_host, port=8420, dev=dev, no_open=no_open)
+            _run_ui_proxy_to_host(live_host, port=8420, dev=dev, no_open=no_open)
             return True
     return False
 
 
-def run_shared_ui_host(
-    repo_path: Path,
+def _run_shared_ui_host(
     port: int,
     *,
     watch_files: bool,
@@ -902,7 +901,7 @@ def run_shared_ui_host(
         dev: Whether to run in dev mode.
         no_open: Whether to skip auto-opening the browser.
     """
-    run_shared_host(
+    _run_shared_host(
         port=port,
         bind=DEFAULT_HOST,
         no_open=no_open,
@@ -946,18 +945,18 @@ def run_ui(
 
     if not direct:
         # Check if a shared host is already running
-        if check_live_host_for_ui(repo_path, no_open=no_open, dev=dev):
+        if _check_live_host_for_ui(repo_path, no_open=no_open, dev=dev):
             return
 
         # No shared host - start one with UI enabled
-        run_shared_ui_host(repo_path, port, watch_files=watch_files, dev=dev, no_open=no_open)
+        _run_shared_ui_host(port, watch_files=watch_files, dev=dev, no_open=no_open)
         return
 
     # Direct mode - run standalone UI
-    run_standalone_ui(repo_path, port, watch_files=watch_files, dev=dev, no_open=no_open)
+    _run_standalone_ui(repo_path, port, watch_files=watch_files, dev=dev, no_open=no_open)
 
 
-def run_shared_host(
+def _run_shared_host(
     port: int,
     bind: str,
     *,
@@ -1056,3 +1055,40 @@ def run_shared_host(
         pass
     finally:
         _cleanup_host(repo_path, storage)
+
+
+class HostRunner:
+    """Class to run the Axon host with configurable options."""
+
+    def __init__(
+        self,
+        port: int,
+        *,
+        no_open: bool = False,
+        watch: bool = True,
+        dev: bool = False,
+        direct: bool = False,
+    ) -> None:
+        self.port = port
+        self.no_open = no_open
+        self.watch = watch
+        self.dev = dev
+        self.direct = direct
+
+    def run_ui(self) -> None:
+        """
+        Launch the Axon web UI.
+
+        This function handles multiple scenarios:
+        1. Direct mode: Run standalone UI without shared host
+        2. Shared host with UI: Connect to existing host
+        3. Shared host without UI: Run proxy UI
+        4. No shared host: Start new shared host with UI
+
+        Args:
+            port: Port to serve the UI on (default: 8420).
+            no_open: Don't auto-open browser when True.
+            watch_files: Enable live file watching when True.
+            dev: Proxy to Vite dev server for HMR when True.
+            direct: Force standalone UI mode even if shared host exists.
+        """
