@@ -28,6 +28,7 @@ from mcp.server.stdio import stdio_server
 from rich.console import Console
 from typer import Exit
 from uvicorn import Config, Server
+from uvicorn import run as uvicorn_run
 
 from axon import __version__
 from axon.core.ingestion.pipeline import PipelineResult, Pipelines
@@ -35,7 +36,7 @@ from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.core.storage.kuzu_backend import KuzuBackend
 from axon.mcp.server import set_lock, set_storage
 from axon.runtime import AxonRuntime
-from axon.web.app import create_app
+from axon.web.app import create_app, create_ui_proxy_app
 
 console = Console()
 logger = getLogger(__name__)
@@ -670,6 +671,292 @@ def _cleanup_host(repo_path: Path, storage: KuzuBackend) -> None:
 # ==================== Shared Host Runner ====================
 
 
+# ==================== UI Helper Functions ====================
+
+
+def check_db_exists(repo_path: Path) -> Path | None:
+    """
+    Check if the database exists and return the db_path, or None if not found.
+
+    Args:
+        repo_path: Path to the repository.
+
+    Returns:
+        Path to the database if it exists, None otherwise.
+    """
+    db_path = repo_path / ".axon" / "kuzu"
+    return db_path if db_path.exists() else None
+
+
+def run_ui_proxy_to_host(
+    live_host: dict,
+    port: int,
+    *,
+    dev: bool,
+    no_open: bool,
+) -> None:
+    """
+    Run a proxy UI that forwards requests to an existing host without UI enabled.
+
+    This is used when a shared host is running but UI is not mounted.
+
+    Args:
+        live_host: Dictionary containing host info (host_url, etc.).
+        port: Port to serve the proxy UI on.
+        dev: Whether to run in dev mode (skip static file serving).
+        no_open: Whether to skip auto-opening the browser.
+    """
+
+    proxy_app = create_ui_proxy_app(live_host["host_url"], dev=dev)
+    host_url = f"http://{DEFAULT_HOST}:{port}"
+    console.print(f"[bold green]Axon UI running at {host_url}")
+    if not no_open:
+        web_open(host_url)
+    uvicorn_run(proxy_app, host=DEFAULT_HOST, port=port, log_level="warning")
+
+
+def _create_standalone_ui_app(
+    db_path: Path,
+    repo_path: Path,
+    *,
+    watch: bool,
+    dev: bool,
+) -> FastAPI:
+    """
+    Create a standalone UI application (for direct mode).
+
+    Args:
+        db_path: Path to the KuzuDB database.
+        repo_path: Path to the repository.
+        watch: Whether to enable file watching.
+        dev: Whether to run in dev mode.
+
+    Returns:
+        Configured FastAPI application for the UI.
+    """
+
+    return create_app(
+        db_path=db_path,
+        repo_path=repo_path,
+        watch=watch,
+        dev=dev,
+    )
+
+
+def _print_standalone_ui_startup(
+    port: int,
+    *,
+    watch_files: bool,
+    dev: bool,
+    no_open: bool,
+) -> str:
+    """
+    Print startup messages for standalone UI mode.
+
+    Args:
+        port: Port the UI is running on.
+        watch_files: Whether file watching is enabled.
+        dev: Whether dev mode is enabled.
+        no_open: Whether browser auto-open is disabled.
+
+    Returns:
+        The URL that the UI is accessible at.
+    """
+    url = f"http://localhost:{port}"
+    console.print(f"[bold green]Axon UI running at {url}")
+
+    if watch_files:
+        console.print("[dim]File watching enabled — graph updates on save")
+    if dev:
+        console.print("[dim]Dev mode — proxying to Vite on :5173[/dim]")
+
+    if not no_open:
+        Timer(1.5, lambda: web_open(url)).start()
+
+    return url
+
+
+async def _run_ui_with_watcher(
+    web_app: FastAPI,
+    port: int,
+    repo_path: Path,
+) -> None:
+    """
+    Run the UI server with file watching enabled.
+
+    Args:
+        web_app: The FastAPI application to run.
+        port: Port to serve on.
+        repo_path: Path to the repository for the watcher.
+    """
+    config = Config(web_app, host="127.0.0.1", port=port, log_level="warning")
+    server = Server(config)
+    stop = Event()
+
+    async def _serve() -> None:
+        await server.serve()
+        stop.set()
+
+    storage = web_app.state.storage
+    await gather(
+        _serve(),
+        Watcher(
+            WatcherDeps(repo_path, storage, stop_event=stop),
+        ).watch_repo(),
+    )
+
+
+def run_standalone_ui(
+    repo_path: Path,
+    port: int,
+    *,
+    watch_files: bool,
+    dev: bool,
+    no_open: bool,
+) -> None:
+    """
+    Run a standalone UI without connecting to a shared host.
+
+    This is used when the --direct flag is set or no shared host is available.
+
+    Args:
+        repo_path: Path to the repository.
+        port: Port to serve on.
+        watch_files: Whether to enable file watching.
+        dev: Whether to run in dev mode.
+        no_open: Whether to skip auto-opening the browser.
+    """
+
+    db_path = check_db_exists(repo_path)
+    if db_path is None:
+        console.print(
+            "[red]Error:[/red] No index found. Run [cyan]axon analyze .[/cyan] first to index this codebase.",
+        )
+        raise Exit(code=1)
+
+    web_app = _create_standalone_ui_app(db_path, repo_path, watch=watch_files, dev=dev)
+    _print_standalone_ui_startup(port, watch_files=watch_files, dev=dev, no_open=no_open)
+
+    if watch_files:
+        try:
+            asyncio_run(_run_ui_with_watcher(web_app, port, repo_path))
+        except KeyboardInterrupt:
+            console.print("\n[b]UI stopped.")
+    else:
+        uvicorn_run(web_app, host="127.0.0.1", port=port, log_level="warning")
+
+
+def check_live_host_for_ui(
+    repo_path: Path,
+    *,
+    no_open: bool,
+    dev: bool,
+) -> bool:
+    """
+    Check if a live host exists and handle UI connection.
+
+    This function checks for an existing shared host and:
+    - If UI is enabled on the host, opens browser and returns True
+    - If UI is not enabled, runs a proxy UI and returns True
+    - If no host exists, returns False
+
+    Args:
+        repo_path: Path to the repository.
+        no_open: Whether to skip auto-opening the browser.
+        dev: Whether to run in dev mode (for proxy).
+
+    Returns:
+        True if a host (or proxy) was started, False if no host exists.
+    """
+    live_host = get_live_host_info(repo_path)
+    if live_host is not None:
+        if live_host.get("ui_enabled", True):
+            # Host is running with UI - connect directly
+            host_url = live_host["host_url"]
+            console.print(f"[bold green]Axon UI available at {host_url}")
+            if not no_open:
+                web_open(host_url)
+            return True
+        else:
+            # Host exists but no UI - run proxy
+            run_ui_proxy_to_host(live_host, port=8420, dev=dev, no_open=no_open)
+            return True
+    return False
+
+
+def run_shared_ui_host(
+    repo_path: Path,
+    port: int,
+    *,
+    watch_files: bool,
+    dev: bool,
+    no_open: bool,
+) -> None:
+    """
+    Start a new shared host with UI enabled.
+
+    Args:
+        repo_path: Path to the repository.
+        port: Port to serve on.
+        watch_files: Whether to enable file watching.
+        dev: Whether to run in dev mode.
+        no_open: Whether to skip auto-opening the browser.
+    """
+    run_shared_host(
+        port=port,
+        bind=DEFAULT_HOST,
+        no_open=no_open,
+        watch=watch_files,
+        dev=dev,
+        managed=False,
+        open_browser=True,
+        announce_ui=True,
+        announce_mcp=False,
+        expose_ui=True,
+        already_running_message="[bold green]Axon UI available at {url}",
+        auto_index=False,
+    )
+
+
+def run_ui(
+    port: int = 8420,
+    *,
+    no_open: bool = False,
+    watch_files: bool = False,
+    dev: bool = False,
+    direct: bool = False,
+) -> None:
+    """
+    Launch the Axon web UI.
+
+    This function handles multiple scenarios:
+    1. Direct mode: Run standalone UI without shared host
+    2. Shared host with UI: Connect to existing host
+    3. Shared host without UI: Run proxy UI
+    4. No shared host: Start new shared host with UI
+
+    Args:
+        port: Port to serve the UI on (default: 8420).
+        no_open: Don't auto-open browser when True.
+        watch_files: Enable live file watching when True.
+        dev: Proxy to Vite dev server for HMR when True.
+        direct: Force standalone UI mode even if shared host exists.
+    """
+    repo_path = Path.cwd().resolve()
+
+    if not direct:
+        # Check if a shared host is already running
+        if check_live_host_for_ui(repo_path, no_open=no_open, dev=dev):
+            return
+
+        # No shared host - start one with UI enabled
+        run_shared_ui_host(repo_path, port, watch_files=watch_files, dev=dev, no_open=no_open)
+        return
+
+    # Direct mode - run standalone UI
+    run_standalone_ui(repo_path, port, watch_files=watch_files, dev=dev, no_open=no_open)
+
+
 def run_shared_host(
     port: int,
     bind: str,
@@ -685,7 +972,26 @@ def run_shared_host(
     already_running_message: str,
     auto_index: bool = True,
 ) -> None:
-    """Run the shared Axon host with configurable UX messaging."""
+    """
+    Run the shared Axon host with configurable UX messaging.
+
+    This is kept for backward compatibility with the serve command.
+    For UI-specific hosting, use run_shared_ui_host instead.
+
+    Args:
+        port: Port to serve on.
+        bind: Host address to bind to.
+        no_open: Don't auto-open browser when True.
+        watch: Enable file watching when True.
+        dev: Enable dev mode when True.
+        managed: Enable managed shutdown when True.
+        open_browser: Open browser on startup when True.
+        announce_ui: Print UI URL when True.
+        announce_mcp: Print MCP URL when True.
+        expose_ui: Mount the frontend UI when True.
+        already_running_message: Message template when host already exists.
+        auto_index: Auto-index if no index exists when True.
+    """
     repo_path = Path.cwd().resolve()
 
     # Check if host is already running

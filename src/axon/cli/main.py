@@ -1,6 +1,5 @@
 """Axon CLI — Graph-powered code intelligence engine."""
 
-from asyncio import Event, gather
 from asyncio import run as asyncio_run
 from contextlib import suppress
 from json import dumps, loads
@@ -8,14 +7,11 @@ from logging import ERROR, WARNING, basicConfig, getLogger
 from pathlib import Path
 from shutil import rmtree
 from sys import platform
-from threading import Timer
 
 from rich import print as rprint
 from rich.logging import RichHandler
 from rich.traceback import install
 from typer import Argument, Context, Exit, Option, Typer, confirm
-from uvicorn import Config, Server
-from uvicorn import run as uvicorn_run
 
 from axon.cli.helpers.db_check import (
     _FALSE,
@@ -28,23 +24,19 @@ from axon.cli.helpers.db_check import (
     version_callback,
 )
 from axon.cli.helpers.host import (
-    DEFAULT_HOST,
     DEFAULT_MANAGED_PORT,
     HostConfig,
     create_host_lease,
     ensure_host_running,
-    get_live_host_info,
     maybe_notify_update,
     proxy_stdio_to_http_mcp,
     remove_host_lease,
-    run_shared_host,
-    web_open,
+    run_ui,
 )
 from axon.core.diff import diff_branches, format_diff
 from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.mcp.server import main as mcp_main
 from axon.mcp.tools import MCPTools
-from axon.web.app import create_app, create_ui_proxy_app
 
 if platform in ("win32", "cygwin", "cli"):
     with suppress(ImportError):
@@ -362,88 +354,33 @@ def ui(
         help="Force standalone UI mode even if a shared Axon host is already running.",
     ),
 ) -> None:
-    """Launch the Axon web UI."""
-    repo_path = Path.cwd().resolve()
-    if not direct:
-        live_host = get_live_host_info(repo_path)
-        if live_host is not None:
-            if live_host.get("ui_enabled", True):
-                rprint(f"[b green]Axon UI available at {live_host['host_url']}")
-                if not no_open:
-                    web_open(live_host["host_url"])
-                return
+    """
+    Launch the Axon web UI.
 
-            proxy_app = create_ui_proxy_app(live_host["host_url"], dev=dev)
-            rprint(f"[b green]Axon UI running at http://{DEFAULT_HOST}:{port}")
-            if not no_open:
-                web_open(f"http://{DEFAULT_HOST}:{port}")
-            uvicorn_run(proxy_app, host=DEFAULT_HOST, port=port, log_level="warning")
-            return
+    This command provides access to the Axon web interface for visualizing
+    and exploring the code graph. It supports multiple modes of operation:
 
-        run_shared_host(
-            port=port,
-            bind=DEFAULT_HOST,
-            no_open=no_open,
-            watch=watch_files,
-            dev=dev,
-            managed=_FALSE,
-            open_browser=True,
-            announce_ui=True,
-            announce_mcp=_FALSE,
-            expose_ui=True,
-            already_running_message="[b green]Axon UI available at {url}",
-            auto_index=_FALSE,
-        )
-        return
+    - Default mode: Connects to an existing shared host if available,
+      or starts a new one with UI enabled.
+    - Direct mode (--direct): Runs a standalone UI without using the
+      shared host infrastructure.
+    - Proxy mode: If a shared host exists without UI, runs a proxy
+      that forwards UI requests to the host's API.
 
-    db_path = repo_path / ".axon" / "kuzu"
-    if not db_path.exists():
-        rprint(
-            "[red]Error: No index found. Run [cyan]axon analyze . first to index this codebase.",
-        )
-        raise Exit(code=1)
-
-    web_app = create_app(
-        db_path=db_path,
-        repo_path=repo_path,
-        watch=watch_files,
+    Args:
+        port: Port number to serve the UI on (default: 8420).
+        no_open: If set, prevents automatic browser opening.
+        watch_files: Enable live file watching to update the graph on save.
+        dev: Enable dev mode to proxy to Vite dev server for HMR.
+        direct: Force standalone UI mode, bypassing shared host detection.
+    """
+    run_ui(
+        port=port,
+        no_open=no_open,
+        watch_files=watch_files,
         dev=dev,
+        direct=direct,
     )
-
-    if not no_open:
-        url = f"http://localhost:{port}"
-        Timer(1.5, lambda: web_open(url)).start()
-
-    rprint(f"[b green]Axon UI running at http://localhost:{port}")
-    if watch_files:
-        rprint("[dim]File watching enabled — graph updates on save")
-    if dev:
-        rprint("[dim]Dev mode — proxying to Vite on :5173")
-
-    if watch_files:
-
-        async def _run() -> None:
-            config = Config(web_app, host="127.0.0.1", port=port, log_level="warning")
-            server = Server(config)
-            stop = Event()
-
-            async def _serve() -> None:
-                await server.serve()
-                stop.set()
-
-            await gather(
-                _serve(),
-                Watcher(
-                    WatcherDeps(repo_path, web_app.state.storage, stop_event=stop),
-                ).watch_repo(),
-            )
-
-        try:
-            asyncio_run(_run())
-        except KeyboardInterrupt:
-            rprint("\n[b]UI stopped.")
-    else:
-        uvicorn_run(web_app, host="127.0.0.1", port=port, log_level="warning")
 
 
 if __name__ == "__main__":
