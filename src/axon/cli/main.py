@@ -23,7 +23,8 @@ from axon.cli.helpers.checker import (
     report,
     version_callback,
 )
-from axon.cli.helpers.host_runner import DEFAULT_MANAGED_PORT, HostConfig, HostRunner, RunnerConfig
+from axon.cli.helpers.host_helpers.configs import DEFAULT_MANAGED_PORT, HostConfig, RunnerConfig
+from axon.cli.helpers.host_runner import HostRunner
 from axon.core.diff import diff_branches, format_diff
 from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.mcp.server import main as mcp_main
