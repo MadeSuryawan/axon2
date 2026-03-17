@@ -15,7 +15,7 @@ import pytest
 
 from axon.core.ingestion.pipeline import PipelineResult, Pipelines
 from axon.core.storage.kuzu_backend import KuzuBackend
-from axon.mcp.tools import Tools
+from axon.mcp.tools import MCPTools
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -276,7 +276,7 @@ class TestMCPContext:
         storage: KuzuBackend,
         pipeline_result: PipelineResult,
     ) -> None:
-        result = Tools().handle_context(storage, "validate")
+        result = MCPTools().handle_context(storage, "validate")
 
         assert "validate" in result.lower()
         # validate calls check, so callees should include check
@@ -288,7 +288,7 @@ class TestMCPContext:
         storage: KuzuBackend,
         pipeline_result: PipelineResult,
     ) -> None:
-        result = Tools().handle_context(storage, "check")
+        result = MCPTools().handle_context(storage, "check")
 
         assert "check" in result.lower()
 
@@ -307,7 +307,7 @@ class TestMCPImpact:
         storage: KuzuBackend,
         pipeline_result: PipelineResult,
     ) -> None:
-        result = Tools().handle_impact(storage, "verify")
+        result = MCPTools().handle_impact(storage, "verify")
 
         # verify is called by check, which is called by validate
         # So the impact traversal should find downstream symbols
@@ -328,7 +328,7 @@ class TestMCPQuery:
         storage: KuzuBackend,
         pipeline_result: PipelineResult,
     ) -> None:
-        result = Tools().handle_query(storage, "User")
+        result = MCPTools().handle_query(storage, "User")
         assert "User" in result
 
 
@@ -346,7 +346,7 @@ class TestMCPDeadCode:
         storage: KuzuBackend,
         pipeline_result: PipelineResult,
     ) -> None:
-        result = Tools().handle_dead_code(storage)
+        result = MCPTools().handle_dead_code(storage)
         assert "orphan_func" in result
 
 

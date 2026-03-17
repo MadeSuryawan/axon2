@@ -30,7 +30,7 @@ from pydantic import AnyUrl
 
 from axon.core.storage.kuzu_backend import KuzuBackend
 from axon.mcp.resources import get_dead_code_list, get_overview, get_schema
-from axon.mcp.tools import MAX_TRAVERSE_DEPTH, Tools
+from axon.mcp.tools import MAX_TRAVERSE_DEPTH, MCPTools
 
 logger = getLogger(__name__)
 
@@ -40,7 +40,7 @@ _storage: KuzuBackend | None = None
 _lock: Lock | None = None
 _db_path: Path | None = None
 
-_tools = Tools()
+_tools = MCPTools()
 
 
 def _resolve_db_path() -> Path:

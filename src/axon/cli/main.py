@@ -11,7 +11,7 @@ from sys import platform
 from rich import print as rprint
 from rich.logging import RichHandler
 from rich.traceback import install
-from typer import Argument, Exit, Option, Typer, confirm
+from typer import Argument, Context, Exit, Option, Typer, confirm
 
 from axon.cli.helpers.db_check import (
     _FALSE,
@@ -24,10 +24,11 @@ from axon.cli.helpers.db_check import (
     start_serve,
     version_callback,
 )
+from axon.cli.helpers.host import _maybe_notify_update
 from axon.core.diff import diff_branches, format_diff
 from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.mcp.server import main as mcp_main
-from axon.mcp.tools import Tools
+from axon.mcp.tools import MCPTools
 
 if platform in ("win32", "cygwin", "cli"):
     with suppress(ImportError):
@@ -65,13 +66,14 @@ app = Typer(
     no_args_is_help=True,
 )
 
-_tools = Tools()
+mcp_tools = MCPTools()
 
 _PATH_ARG = Argument(Path("."), help="Path to the repository to index.")
 
 
 @app.callback()
 def main(
+    ctx: Context,
     *,
     version: bool | None = Option(
         None,
@@ -83,6 +85,7 @@ def main(
     ),
 ) -> None:
     """Axon — Graph-powered code intelligence engine."""
+    _maybe_notify_update(ctx.invoked_subcommand)
 
 
 @app.command()
@@ -112,7 +115,9 @@ def status() -> None:
     meta_path = repo_path / ".axon" / "meta.json"
 
     if not meta_path.exists():
-        rprint(f"[red]Error:[/red] No index found at {repo_path}. Run 'axon analyze' first.")
+        rprint(
+            "[red]Error: No index found.[/red] Run [cyan]axon analyze .[/cyan] first to index this codebase.",
+        )
         raise Exit(code=1)
 
     meta = loads(meta_path.read_text(encoding="utf-8"))
@@ -139,8 +144,7 @@ def status() -> None:
 def list_repos() -> None:
     """List all indexed repositories."""
 
-    result = _tools.handle_list_repos()
-    rprint(result)
+    rprint(mcp_tools.handle_list_repos())
 
 
 @app.command()
@@ -154,8 +158,7 @@ def clean(
     ),
 ) -> None:
     """Delete index for current repository."""
-    repo_path = Path.cwd().resolve()
-    axon_dir = repo_path / ".axon"
+    repo_path, axon_dir, _ = get_path()
 
     if not axon_dir.exists():
         rprint(f"[red]Error:[/red] No index found at {repo_path}. Nothing to clean.")
@@ -177,8 +180,7 @@ def query(
     """Search the knowledge graph."""
 
     storage = load_storage()
-    result = _tools.handle_query(storage, q, limit=limit)
-    rprint(result)
+    rprint(mcp_tools.handle_query(storage, q, limit=limit))
     storage.close()
 
 
@@ -189,7 +191,7 @@ def context(
     """Show 360-degree view of a symbol."""
 
     storage = load_storage()
-    result = _tools.handle_context(storage, name)
+    result = mcp_tools.handle_context(storage, name)
     rprint(result)
     storage.close()
 
@@ -202,7 +204,7 @@ def impact(
     """Show blast radius of changing a symbol."""
 
     storage = load_storage()
-    result = _tools.handle_impact(storage, target, depth=depth)
+    result = mcp_tools.handle_impact(storage, target, depth=depth)
     rprint(result)
     storage.close()
 
@@ -212,7 +214,7 @@ def dead_code() -> None:
     """List all detected dead code."""
 
     storage = load_storage()
-    result = _tools.handle_dead_code(storage)
+    result = mcp_tools.handle_dead_code(storage)
     rprint(result)
     storage.close()
 
@@ -224,7 +226,7 @@ def cypher(
     """Execute raw Cypher against the knowledge graph."""
 
     storage = load_storage()
-    result = _tools.handle_cypher(storage, query)
+    result = mcp_tools.handle_cypher(storage, query)
     rprint(result)
     storage.close()
 

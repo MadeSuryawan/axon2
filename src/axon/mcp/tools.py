@@ -2469,7 +2469,7 @@ class _Helpers:
         return lines
 
 
-class Tools(_Helpers):
+class MCPTools(_Helpers):
     """
     Handles MCP tool requests for the Axon knowledge graph.
 
