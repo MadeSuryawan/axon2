@@ -21,10 +21,17 @@ from axon.cli.helpers.db_check import (
     load_storage,
     process_meta,
     report,
-    start_serve,
     version_callback,
 )
-from axon.cli.helpers.host import _maybe_notify_update
+from axon.cli.helpers.host import (
+    DEFAULT_MANAGED_PORT,
+    HostConfig,
+    create_host_lease,
+    ensure_host_running,
+    maybe_notify_update,
+    proxy_stdio_to_http_mcp,
+    remove_host_lease,
+)
 from axon.core.diff import diff_branches, format_diff
 from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.mcp.server import main as mcp_main
@@ -85,14 +92,13 @@ def main(
     ),
 ) -> None:
     """Axon — Graph-powered code intelligence engine."""
-    _maybe_notify_update(ctx.invoked_subcommand)
+    maybe_notify_update(ctx.invoked_subcommand)
 
 
 @app.command()
 def analyze(
     path: Path = _PATH_ARG,
     *,
-    full: bool = Option(_FALSE, "--full", help="Perform a full re-index."),
     no_embeddings: bool = Option(
         _FALSE,
         "--no-embeddings",
@@ -309,39 +315,29 @@ def mcp() -> None:
 @app.command()
 def serve(
     *,
-    watch: bool = Option(
-        _FALSE,
-        "--watch",
-        "-w",
-        help="Enable file watching with auto-reindex.",
-    ),
-    no_embeddings: bool = Option(
-        _FALSE,
-        "--no-embeddings",
-        help="Skip vector embedding generation.",
-    ),
+    watch: bool = Option(_FALSE, "--watch", "-w", help="Enable file watching with auto-reindex."),
 ) -> None:
     """Start MCP server, optionally with live file watching."""
-
     if not watch:
         asyncio_run(mcp_main())
         return
 
-    repo_path, axon_dir, db_path = get_path()
-    storage = get_kuzu(db_path)
-
-    check_meta_json(axon_dir, repo_path, storage, no_embeddings=no_embeddings)
+    repo_path = Path.cwd().resolve()
+    lease_path: Path | None = None
+    try:
+        live_host = ensure_host_running(
+            repo_path,
+            HostConfig(port=DEFAULT_MANAGED_PORT, watch=True, managed=True),
+        )
+        lease_path = create_host_lease(repo_path, "mcp")
+    except RuntimeError as exc:
+        rprint(f"[red]Error: {exc}")
+        raise Exit(code=1) from exc
 
     try:
-        rprint(
-            f"[b blue]Serving and watching [b magenta]{repo_path}[/b magenta] "
-            "for changes. [white](Ctrl+D to stop)",
-        )
-        asyncio_run(start_serve(repo_path, storage))
-    except KeyboardInterrupt:
-        pass
+        asyncio_run(proxy_stdio_to_http_mcp(live_host["mcp_url"]))
     finally:
-        storage.close()
+        remove_host_lease(lease_path)
 
 
 if __name__ == "__main__":

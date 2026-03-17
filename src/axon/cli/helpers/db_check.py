@@ -1,4 +1,3 @@
-from asyncio import Event, Lock, gather
 from contextlib import suppress
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -9,16 +8,12 @@ from shutil import rmtree
 from sys import stderr
 from typing import Any
 
-from mcp.server.stdio import stdio_server
 from rich import print as rprint
 from typer import Exit, Option
 
 from axon import __version__
 from axon.core.ingestion.pipeline import PipelineResult, Pipelines
-from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.core.storage.kuzu_backend import KuzuBackend
-from axon.mcp.server import server as mcp_server
-from axon.mcp.server import set_lock, set_storage
 
 logger = getLogger(__name__)
 
@@ -33,33 +28,6 @@ def version_callback(*, value: bool) -> None:
     if value:
         rprint(f"Axon v{__version__}")
         raise Exit()
-
-
-async def start_serve(
-    repo_path: Path,
-    storage: KuzuBackend,
-) -> None:
-    lock = Lock()
-    set_storage(storage)
-    set_lock(lock)
-    stop = Event()
-
-    deps = WatcherDeps(repo_path, storage, stop_event=stop, lock=lock)
-
-    async with stdio_server() as (read, write):
-
-        async def _mcp_then_stop() -> None:
-            await mcp_server.run(
-                read,
-                write,
-                mcp_server.create_initialization_options(),
-            )
-            stop.set()
-
-        await gather(
-            _mcp_then_stop(),
-            Watcher(deps).watch_repo(),
-        )
 
 
 def get_kuzu(db_path: Path, *, read_only: bool = False) -> KuzuBackend:

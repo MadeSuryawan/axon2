@@ -182,7 +182,7 @@ def _get_latest_version() -> str | None:
     return latest
 
 
-def _maybe_notify_update(invoked_subcommand: str | None) -> None:
+def maybe_notify_update(invoked_subcommand: str | None) -> None:
     if invoked_subcommand in UPDATE_CHECK_SKIP_COMMANDS:
         return
     if (latest := _get_latest_version()) and _is_newer_version(latest, __version__):
@@ -321,7 +321,7 @@ def _clear_host_meta(repo_path: Path) -> None:
 # ==================== Lease Management Functions ====================
 
 
-def _create_host_lease(repo_path: Path, lease_type: str) -> Path:
+def create_host_lease(repo_path: Path, lease_type: str) -> Path:
     lease_dir = _host_lease_dir(repo_path)
     lease_dir.mkdir(parents=True, exist_ok=True)
     lease_path = lease_dir / f"{getpid()}-{uuid4().hex}.json"
@@ -334,7 +334,7 @@ def _create_host_lease(repo_path: Path, lease_type: str) -> Path:
     return lease_path
 
 
-def _remove_host_lease(lease_path: Path | None) -> None:
+def remove_host_lease(lease_path: Path | None) -> None:
     if lease_path is not None:
         lease_path.unlink(missing_ok=True)
 
@@ -428,7 +428,7 @@ def _start_host_background(
         )
 
 
-def _ensure_host_running(
+def ensure_host_running(
     repo_path: Path,
     config: HostConfig | None = None,
 ) -> dict:
@@ -469,7 +469,7 @@ def _version_callback(*, value: bool) -> None:
 # ==================== MCP Proxy ====================
 
 
-async def _proxy_stdio_to_http_mcp(mcp_url: str) -> None:
+async def proxy_stdio_to_http_mcp(mcp_url: str) -> None:
     """Bridge a local stdio MCP session to the shared HTTP MCP host."""
     async with (
         stdio_server() as (local_read, local_write),
