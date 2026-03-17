@@ -123,7 +123,7 @@ def status() -> None:
     meta = loads(meta_path.read_text(encoding="utf-8"))
     stats = meta.get("stats", {})
 
-    rprint(f"[bold]Index status for[/bold] {repo_path}")
+    rprint(f"[bold]Index status for {repo_path}")
     rprint(f"  Version:        {meta.get('version', '?')}")
     rprint(f"  Last indexed:   {meta.get('last_indexed_at', '?')}")
     rprint(f"  Files:          {stats.get('files', '?')}")
@@ -161,7 +161,7 @@ def clean(
     repo_path, axon_dir, _ = get_path()
 
     if not axon_dir.exists():
-        rprint(f"[red]Error:[/red] No index found at {repo_path}. Nothing to clean.")
+        rprint(f"[red]Error: No index found at {repo_path}. Nothing to clean.")
         raise Exit(code=1)
 
     if not force and not confirm(f"Delete index at {axon_dir}?"):
@@ -169,7 +169,7 @@ def clean(
         raise Exit()
 
     rmtree(axon_dir)
-    rprint(f"[green]Deleted[/green] {axon_dir}")
+    rprint(f"[green]Deleted {axon_dir}")
 
 
 @app.command()
@@ -191,8 +191,7 @@ def context(
     """Show 360-degree view of a symbol."""
 
     storage = load_storage()
-    result = mcp_tools.handle_context(storage, name)
-    rprint(result)
+    rprint(mcp_tools.handle_context(storage, name))
     storage.close()
 
 
@@ -204,8 +203,7 @@ def impact(
     """Show blast radius of changing a symbol."""
 
     storage = load_storage()
-    result = mcp_tools.handle_impact(storage, target, depth=depth)
-    rprint(result)
+    rprint(mcp_tools.handle_impact(storage, target, depth=depth))
     storage.close()
 
 
@@ -214,8 +212,7 @@ def dead_code() -> None:
     """List all detected dead code."""
 
     storage = load_storage()
-    result = mcp_tools.handle_dead_code(storage)
-    rprint(result)
+    rprint(mcp_tools.handle_dead_code(storage))
     storage.close()
 
 
@@ -226,8 +223,7 @@ def cypher(
     """Execute raw Cypher against the knowledge graph."""
 
     storage = load_storage()
-    result = mcp_tools.handle_cypher(storage, query)
-    rprint(result)
+    rprint(mcp_tools.handle_cypher(storage, query))
     storage.close()
 
 
@@ -246,20 +242,20 @@ def setup(
     ),
 ) -> None:
     """Configure MCP for Claude Code / Cursor."""
-    mcp_config = {
+    stdio_config = {
         "command": "axon",
         "args": ["serve", "--watch"],
     }
 
     if claude or (not claude and not cursor):
-        rprint("[bold]Claude Code[/bold]")
+        rprint("[bold]Claude Code")
         rprint("Add to .mcp.json in your project root:")
-        rprint(dumps({"mcpServers": {"axon": mcp_config}}, indent=2))
-        rprint("\n[dim]Or run: claude mcp add axon -- axon serve --watch[/dim]")
+        rprint(dumps({"mcpServers": {"axon": stdio_config}}, indent=2))
+        rprint("\n[dim]Or run: claude mcp add axon -- axon serve --watch")
 
     if cursor or (not claude and not cursor):
-        rprint("[bold]Add to your Cursor MCP config:[/bold]")
-        rprint(dumps({"axon": mcp_config}, indent=2))
+        rprint("[bold]Add to your Cursor MCP config:")
+        rprint(dumps({"axon": stdio_config}, indent=2))
 
 
 @app.command()
@@ -281,7 +277,7 @@ def watch(
     try:
         asyncio_run(Watcher(WatcherDeps(repo_path, storage)).watch_repo())
     except KeyboardInterrupt:
-        rprint("\n[bold]Watch stopped.[/bold]")
+        rprint("\n[bold]Watch stopped.")
     finally:
         storage.close()
 
@@ -297,12 +293,10 @@ def diff(
 
     repo_path = Path.cwd().resolve()
     try:
-        result = diff_branches(repo_path, branch_range)
+        rprint(format_diff(diff_branches(repo_path, branch_range)))
     except (ValueError, RuntimeError) as exc:
-        rprint(f"[red]Error:[/red] {exc}")
+        rprint(f"[red]Error: {exc}")
         raise Exit(code=1) from exc
-
-    rprint(format_diff(result))
 
 
 @app.command()
@@ -321,7 +315,6 @@ def serve(
         "-w",
         help="Enable file watching with auto-reindex.",
     ),
-    full: bool = Option(_FALSE, "--full", help="Perform a full re-index."),
     no_embeddings: bool = Option(
         _FALSE,
         "--no-embeddings",
