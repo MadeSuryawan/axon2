@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from axon.core.embeddings.embedder import embed_query
-from axon.core.search.hybrid import hybrid_search
+from axon.core.search.hybrid import SearchDeps, hybrid_search
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +33,12 @@ def search(body: SearchRequest, request: Request) -> dict:
 
     try:
         results = hybrid_search(
-            body.query,
-            storage,
-            query_embedding=query_embedding,
-            limit=body.limit,
+            SearchDeps(
+                query=body.query,
+                storage=storage,
+                query_embedding=query_embedding,
+                limit=body.limit,
+            ),
         )
     except Exception as exc:
         logger.error("Search failed: %s", exc, exc_info=True)
@@ -53,5 +55,5 @@ def search(body: SearchRequest, request: Request) -> dict:
                 "snippet": r.snippet,
             }
             for r in results
-        ]
+        ],
     }

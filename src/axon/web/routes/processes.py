@@ -21,7 +21,7 @@ def get_processes(request: Request) -> dict:
             "MATCH (p:Process) "
             "OPTIONAL MATCH (n)-[r:CodeRelation]->(p) WHERE r.rel_type = 'step_in_process' "
             "RETURN p.id, p.name, collect(n.id), collect(r.step_number) "
-            "ORDER BY p.name"
+            "ORDER BY p.name",
         )
     except Exception as exc:
         logger.error("Processes query failed: %s", exc, exc_info=True)
@@ -38,14 +38,19 @@ def get_processes(request: Request) -> dict:
             logger.debug("Row unpacking failed: %s", e)
             continue
         steps = sorted(
-            [{"nodeId": nid, "stepNumber": sn} for nid, sn in zip(node_ids or [], step_numbers or [])],
+            [
+                {"nodeId": nid, "stepNumber": sn}
+                for nid, sn in zip(node_ids or [], step_numbers or [], strict=True)
+            ],
             key=lambda s: (s["stepNumber"] is None, s["stepNumber"] or 0),
         )
-        processes.append({
-            "name": pname,
-            "kind": None,
-            "stepCount": len(steps),
-            "steps": steps,
-        })
+        processes.append(
+            {
+                "name": pname,
+                "kind": None,
+                "stepCount": len(steps),
+                "steps": steps,
+            },
+        )
 
     return {"processes": processes}

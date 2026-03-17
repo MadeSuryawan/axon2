@@ -21,7 +21,8 @@ _listeners_lock = threading.Lock()
 
 
 async def _event_generator(listeners: list[asyncio.Queue] | None) -> AsyncIterator[dict]:
-    """Yield SSE-formatted events from a per-client queue.
+    """
+    Yield SSE-formatted events from a per-client queue.
 
     Registers a private queue on connect, removes it on disconnect, so that
     every connected client receives every event (fan-out).
@@ -40,7 +41,7 @@ async def _event_generator(listeners: list[asyncio.Queue] | None) -> AsyncIterat
                     "event": event.get("type", "message"),
                     "data": json.dumps(event.get("data", {})),
                 }
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send keepalive comment to prevent connection timeout
                 yield {"comment": "keepalive"}
             except asyncio.CancelledError:

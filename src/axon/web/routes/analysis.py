@@ -6,10 +6,12 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
+from contextlib import suppress
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from axon.core.ingestion.pipeline import run_pipeline
+from axon.config.constants import SYSTEM_EXCEPTIONS
+from axon.core.ingestion.pipeline import Pipelines
 from axon.mcp.resources import get_dead_code_symbols
 from axon.web.routes.graph import _serialize_node
 
@@ -60,11 +62,13 @@ def get_dead_code(request: Request) -> dict:
     by_file: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
         _, name, file_path, start_line, node_type = row
-        by_file[file_path].append({
-            "name": name,
-            "type": str(node_type),
-            "line": start_line,
-        })
+        by_file[file_path].append(
+            {
+                "name": name,
+                "type": str(node_type),
+                "line": start_line,
+            },
+        )
 
     return {"total": len(rows), "byFile": dict(by_file)}
 
@@ -77,7 +81,7 @@ def get_coupling(request: Request) -> dict:
     try:
         rows = storage.execute_raw(
             "MATCH (a)-[r:CodeRelation]->(b) WHERE r.rel_type = 'coupled_with' "
-            "RETURN a.name, a.file_path, b.name, b.file_path, r.strength, r.co_changes"
+            "RETURN a.name, a.file_path, b.name, b.file_path, r.strength, r.co_changes",
         )
     except Exception as exc:
         logger.error("Coupling query failed: %s", exc, exc_info=True)
@@ -86,12 +90,14 @@ def get_coupling(request: Request) -> dict:
     pairs = []
     for row in rows or []:
         _, file_a, _, file_b, strength, co_changes = row
-        pairs.append({
-            "fileA": file_a,
-            "fileB": file_b,
-            "strength": strength,
-            "coChanges": co_changes,
-        })
+        pairs.append(
+            {
+                "fileA": file_a,
+                "fileB": file_b,
+                "strength": strength,
+                "coChanges": co_changes,
+            },
+        )
 
     return {"pairs": pairs}
 
@@ -106,16 +112,16 @@ def get_communities(request: Request) -> dict:
         rows = storage.execute_raw(
             "MATCH (c:Community) "
             "OPTIONAL MATCH (n)-[r:CodeRelation]->(c) WHERE r.rel_type = 'member_of' "
-            "RETURN c.id, c.name, c.cohesion, collect(n.id)"
+            "RETURN c.id, c.name, c.cohesion, collect(n.id)",
         )
-    except Exception:
+    except SYSTEM_EXCEPTIONS:
         # Existing DB may lack the cohesion column — fall back gracefully.
         has_cohesion = False
         try:
             rows = storage.execute_raw(
                 "MATCH (c:Community) "
                 "OPTIONAL MATCH (n)-[r:CodeRelation]->(c) WHERE r.rel_type = 'member_of' "
-                "RETURN c.id, c.name, collect(n.id)"
+                "RETURN c.id, c.name, collect(n.id)",
             )
         except Exception as exc:
             logger.error("Communities query failed: %s", exc, exc_info=True)
@@ -131,13 +137,15 @@ def get_communities(request: Request) -> dict:
         else:
             cid, cname, member_ids = row
             cohesion_val = None
-        communities.append({
-            "id": cid,
-            "name": cname,
-            "memberCount": len(member_ids) if member_ids else 0,
-            "cohesion": round(cohesion_val, 4) if cohesion_val is not None else None,
-            "members": member_ids or [],
-        })
+        communities.append(
+            {
+                "id": cid,
+                "name": cname,
+                "memberCount": len(member_ids) if member_ids else 0,
+                "cohesion": round(cohesion_val, 4) if cohesion_val is not None else None,
+                "members": member_ids or [],
+            },
+        )
 
     return {"communities": communities}
 
@@ -157,38 +165,39 @@ def get_health(request: Request) -> dict:
             "UNION ALL MATCH (n:Method) WHERE n.start_line > 0 "
             "RETURN count(n), sum(CASE WHEN n.is_dead = true THEN 1 ELSE 0 END) "
             "UNION ALL MATCH (n:Class) WHERE n.start_line > 0 "
-            "RETURN count(n), sum(CASE WHEN n.is_dead = true THEN 1 ELSE 0 END)"
+            "RETURN count(n), sum(CASE WHEN n.is_dead = true THEN 1 ELSE 0 END)",
         )
         total_symbols = int(sum(r[0] for r in dc_rows if r and r[0]) or 1)
         dead_count = int(sum(r[1] for r in dc_rows if r and r[1]) or 0)
-        breakdown["deadCode"] = round(max(0.0, 100.0 - (dead_count / max(total_symbols, 1) * 100)), 1)
-    except Exception:
+        breakdown["deadCode"] = round(
+            max(0.0, 100.0 - (dead_count / max(total_symbols, 1) * 100)),
+            1,
+        )
+    except SYSTEM_EXCEPTIONS:
         logger.warning("Health: dead code query failed", exc_info=True)
         breakdown["deadCode"] = 100.0
 
     # Coupling score (20%): 100 - (high_coupling / total_coupling * 200)
     try:
         coupling_rows = storage.execute_raw(
-            "MATCH ()-[r:CodeRelation]->() WHERE r.rel_type = 'coupled_with' "
-            "RETURN r.strength"
+            "MATCH ()-[r:CodeRelation]->() WHERE r.rel_type = 'coupled_with' RETURN r.strength",
         )
         if coupling_rows:
             total_coupling = len(coupling_rows)
             high_coupling = sum(1 for row in coupling_rows if row[0] and row[0] > 0.7)
             breakdown["coupling"] = round(
-                max(0.0, 100.0 - (high_coupling / max(total_coupling, 1) * 200)), 1
+                max(0.0, 100.0 - (high_coupling / max(total_coupling, 1) * 200)),
+                1,
             )
         else:
             breakdown["coupling"] = 100.0
-    except Exception:
+    except SYSTEM_EXCEPTIONS:
         logger.warning("Health: coupling query failed", exc_info=True)
         breakdown["coupling"] = 100.0
 
     # Modularity score (20%): community count as proxy
     try:
-        comm_rows = storage.execute_raw(
-            "MATCH (c:Community) RETURN count(c)"
-        )
+        comm_rows = storage.execute_raw("MATCH (c:Community) RETURN count(c)")
         comm_count = comm_rows[0][0] if comm_rows and comm_rows[0] else 0
         # Heuristic: 3-15 communities is ideal; fewer or too many is worse
         if comm_count == 0:
@@ -197,18 +206,20 @@ def get_health(request: Request) -> dict:
             breakdown["modularity"] = min(100.0, round(comm_count / 15.0 * 100, 1))
         else:
             breakdown["modularity"] = round(max(50.0, 100.0 - (comm_count - 15) * 2), 1)
-    except Exception:
+    except SYSTEM_EXCEPTIONS:
         logger.warning("Health: modularity query failed", exc_info=True)
         breakdown["modularity"] = 50.0
 
     # Confidence score (20%): avg(confidence) * 100 across CALLS edges
     try:
         conf_rows = storage.execute_raw(
-            "MATCH ()-[r:CodeRelation]->() WHERE r.rel_type = 'calls' RETURN avg(r.confidence)"
+            "MATCH ()-[r:CodeRelation]->() WHERE r.rel_type = 'calls' RETURN avg(r.confidence)",
         )
-        avg_conf = conf_rows[0][0] if conf_rows and conf_rows[0] and conf_rows[0][0] is not None else 0.8
+        avg_conf = (
+            conf_rows[0][0] if conf_rows and conf_rows[0] and conf_rows[0][0] is not None else 0.8
+        )
         breakdown["confidence"] = round(min(100.0, avg_conf * 100), 1)
-    except Exception:
+    except SYSTEM_EXCEPTIONS:
         logger.warning("Health: confidence query failed", exc_info=True)
         breakdown["confidence"] = 80.0
 
@@ -220,14 +231,12 @@ def get_health(request: Request) -> dict:
             "RETURN count(n), count(DISTINCT CASE WHEN r IS NOT NULL THEN n.id END) "
             "UNION ALL MATCH (n:Method) "
             "OPTIONAL MATCH (n)-[r:CodeRelation]->() WHERE r.rel_type = 'step_in_process' "
-            "RETURN count(n), count(DISTINCT CASE WHEN r IS NOT NULL THEN n.id END)"
+            "RETURN count(n), count(DISTINCT CASE WHEN r IS NOT NULL THEN n.id END)",
         )
         callable_count = sum(r[0] for r in cov_rows if r and r[0]) or 1
         in_process = sum(r[1] for r in cov_rows if r and r[1]) or 0
-        breakdown["coverage"] = round(
-            min(100.0, in_process / max(callable_count, 1) * 100), 1
-        )
-    except Exception:
+        breakdown["coverage"] = round(min(100.0, in_process / max(callable_count, 1) * 100), 1)
+    except SYSTEM_EXCEPTIONS:
         logger.warning("Health: coverage query failed", exc_info=True)
         breakdown["coverage"] = 0.0
 
@@ -245,7 +254,8 @@ def get_health(request: Request) -> dict:
 
 @router.post("/reindex")
 async def trigger_reindex(request: Request) -> dict:
-    """Trigger a full reindex in a background thread.
+    """
+    Trigger a full reindex in a background thread.
 
     Only available when the app is started in watch mode (storage is read-write).
     """
@@ -264,10 +274,8 @@ async def trigger_reindex(request: Request) -> dict:
         if not event_listeners:
             return
         for q in list(event_listeners):
-            try:
+            with suppress(Exception):
                 loop.call_soon_threadsafe(q.put_nowait, event)
-            except Exception:
-                pass
 
     if not _reindex_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Reindex already in progress")
@@ -277,7 +285,7 @@ async def trigger_reindex(request: Request) -> dict:
         try:
             _broadcast({"type": "reindex_start", "data": {}})
             storage = request.app.state.storage
-            run_pipeline(repo_path, storage=storage)
+            Pipelines(repo_path, storage).run_pipelines()
             logger.info("Reindex completed for %s", repo_path)
             success = True
         except Exception:

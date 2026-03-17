@@ -7,6 +7,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from axon.config.constants import SYSTEM_EXCEPTIONS
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["files"])
@@ -59,23 +61,21 @@ def get_tree(request: Request) -> dict:
 
     try:
         file_rows = storage.execute_raw(
-            "MATCH (n:File) "
-            "RETURN n.id, n.name, n.file_path, n.language"
+            "MATCH (n:File) RETURN n.id, n.name, n.file_path, n.language",
         )
-    except Exception:
+    except SYSTEM_EXCEPTIONS:
         file_rows = []
 
     symbol_counts: dict[str, int] = {}
     try:
         count_rows = storage.execute_raw(
-            "MATCH (n) WHERE n.file_path <> '' AND n.start_line > 0 "
-            "RETURN n.file_path, count(n)"
+            "MATCH (n) WHERE n.file_path <> '' AND n.start_line > 0 RETURN n.file_path, count(n)",
         )
         for row in count_rows or []:
             if row and len(row) > 1:
                 symbol_counts[row[0]] = row[1]
-    except Exception:
-        pass
+    except SYSTEM_EXCEPTIONS:
+        logger.warning("Failed to query symbol counts", exc_info=True)
 
     root_children: dict[str, dict] = {}
 
@@ -107,10 +107,7 @@ def get_tree(request: Request) -> dict:
         language = row[3] if len(row) > 3 and row[3] else _detect_language(file_path)
         name = parts[-1] if parts else row[1]
 
-        if len(parts) > 1:
-            parent = _ensure_path(parts)
-        else:
-            parent = root_children
+        parent = _ensure_path(parts) if len(parts) > 1 else root_children
 
         parent[name] = {
             "name": name,
@@ -123,7 +120,10 @@ def get_tree(request: Request) -> dict:
 
     def _dict_to_list(children_dict: dict) -> list[dict]:
         result = []
-        for node in sorted(children_dict.values(), key=lambda n: (n["type"] != "folder", n["name"])):
+        for node in sorted(
+            children_dict.values(),
+            key=lambda n: (n["type"] != "folder", n["name"]),
+        ):
             entry = {
                 "name": node["name"],
                 "path": node["path"],

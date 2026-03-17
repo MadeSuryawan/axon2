@@ -23,7 +23,8 @@ class CypherRequest(BaseModel):
 
 
 def _extract_return_columns(query: str) -> list[str]:
-    """Best-effort extraction of column names from a Cypher RETURN clause.
+    """
+    Best-effort extraction of column names from a Cypher RETURN clause.
 
     Handles aliases (``AS name``), dotted properties (``n.name``), and
     function calls (``count(n)``).

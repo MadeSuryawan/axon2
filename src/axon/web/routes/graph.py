@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
+from axon.config.constants import SYSTEM_EXCEPTIONS
 from axon.core.graph.model import GraphNode, GraphRelationship
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ def get_overview(request: Request) -> dict:
     total_nodes = 0
     try:
         rows = storage.execute_raw(
-            "MATCH (n) RETURN labels(n), count(n) ORDER BY count(n) DESC"
+            "MATCH (n) RETURN labels(n), count(n) ORDER BY count(n) DESC",
         )
         for row in rows or []:
             raw_label = row[0] if row else "Unknown"
@@ -115,21 +116,21 @@ def get_overview(request: Request) -> dict:
             count = row[1] if len(row) > 1 else 0
             nodes_by_label[label] = count
             total_nodes += count
-    except Exception:
+    except SYSTEM_EXCEPTIONS:
         logger.warning("Failed to query node counts", exc_info=True)
 
     edges_by_type: dict[str, int] = {}
     total_edges = 0
     try:
         rows = storage.execute_raw(
-            "MATCH ()-[r:CodeRelation]->() RETURN r.rel_type, count(r) ORDER BY count(r) DESC"
+            "MATCH ()-[r:CodeRelation]->() RETURN r.rel_type, count(r) ORDER BY count(r) DESC",
         )
         for row in rows or []:
             rel_type = row[0] if row else "Unknown"
             count = row[1] if len(row) > 1 else 0
             edges_by_type[str(rel_type)] = count
             total_edges += count
-    except Exception:
+    except SYSTEM_EXCEPTIONS:
         logger.warning("Failed to query edge counts", exc_info=True)
 
     return {

@@ -30,9 +30,11 @@ class DiffRequest(BaseModel):
     @classmethod
     def validate_ref(cls, v: str) -> str:
         if not v or not _SAFE_REF.match(v):
-            raise ValueError("Invalid git ref")
+            details = f"Invalid git ref: {v!r}"
+            raise ValueError(details)
         if v.startswith("-"):
-            raise ValueError("Git ref cannot start with -")
+            details = f"Git ref cannot start with -: {v!r}"
+            raise ValueError(details)
         return v
 
 

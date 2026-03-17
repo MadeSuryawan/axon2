@@ -64,6 +64,7 @@ getLogger("httpcore").setLevel(ERROR)
 getLogger("httpx").setLevel(ERROR)
 getLogger("fastembed").setLevel(WARNING)
 getLogger("filelock").setLevel(WARNING)
+getLogger("sse_starlette").setLevel(WARNING)
 getLogger("pygments").setLevel(WARNING)
 install()
 

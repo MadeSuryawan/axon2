@@ -1,4 +1,5 @@
-"""FastAPI application factory for the Axon Web UI.
+"""
+FastAPI application factory for the Axon Web UI.
 
 Creates a configured FastAPI app that wraps the StorageBackend,
 serves API routes, and optionally mounts the frontend SPA.
@@ -7,16 +8,16 @@ serves API routes, and optionally mounts the frontend SPA.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
 import httpx
 from fastapi import FastAPI, Request
-from httpx import ReadError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from httpx import ReadError
 from starlette.routing import Route
 
 from axon.core.storage.kuzu_backend import KuzuBackend
@@ -41,21 +42,28 @@ FRONTEND_DIR = Path(__file__).resolve().parent / "frontend" / "dist"
 def create_app(
     db_path: Path,
     repo_path: Path | None = None,
-    watch: bool = False,
-    dev: bool = False,
     runtime: AxonRuntime | None = None,
-    mount_mcp: bool = False,
     host_url: str | None = None,
     mcp_url: str | None = None,
+    *,
+    mount_mcp: bool = False,
+    watch: bool = False,
+    dev: bool = False,
     mount_frontend: bool = True,
 ) -> FastAPI:
-    """Build and return a fully configured FastAPI application.
+    """
+    Build and return a fully configured FastAPI application.
 
     Args:
         db_path: Path to the KuzuDB database directory.
         repo_path: Root of the repository (for file serving and reindex).
-        watch: When True, enables SSE event streaming and reindex support.
-        dev: When True, skips static file serving (use Vite dev server instead).
+        runtime: Optional AxonRuntime instance to use.
+        host_url: Optional host URL to announce.
+        mcp_url: Optional MCP URL to announce.
+        mount_mcp: Whether to mount the MCP server.
+        watch: Whether to enable SSE event streaming and reindex support.
+        dev: Whether to enable dev mode.
+        mount_frontend: Whether to mount the frontend.
 
     Returns:
         A ready-to-run FastAPI instance.
@@ -165,7 +173,7 @@ def create_ui_proxy_app(api_base_url: str, *, dev: bool = False) -> FastAPI:
                 )
                 upstream_stream = await client.send(upstream_request, stream=True)
 
-                async def _iter_bytes():
+                async def _iter_bytes() -> AsyncIterator[bytes]:
                     try:
                         async for chunk in upstream_stream.aiter_bytes():
                             yield chunk
