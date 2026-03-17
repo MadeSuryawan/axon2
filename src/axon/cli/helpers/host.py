@@ -35,7 +35,7 @@ from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.core.storage.kuzu_backend import KuzuBackend
 from axon.mcp.server import set_lock, set_storage
 from axon.runtime import AxonRuntime
-from axon.web import app as web_app_module
+from axon.web.app import create_app
 
 console = Console()
 logger = getLogger(__name__)
@@ -380,7 +380,7 @@ def _is_host_alive(meta: dict, repo_path: Path) -> bool:
         return False
 
 
-def _get_live_host_info(repo_path: Path) -> dict | None:
+def get_live_host_info(repo_path: Path) -> dict | None:
     meta = _read_host_meta(repo_path)
     if meta is None:
         return None
@@ -436,7 +436,7 @@ def ensure_host_running(
     if config is None:
         config = HostConfig()
 
-    live_host = _get_live_host_info(repo_path)
+    live_host = get_live_host_info(repo_path)
     if live_host is not None:
         return live_host
 
@@ -449,7 +449,7 @@ def ensure_host_running(
     )
     deadline = time() + config.timeout_seconds
     while time() < deadline:
-        live_host = _get_live_host_info(repo_path)
+        live_host = get_live_host_info(repo_path)
         if live_host is not None:
             return live_host
         sleep(0.2)
@@ -507,7 +507,7 @@ def _check_existing_host(
 
     Returns True if a host is running (and was handled), False otherwise.
     """
-    live_host = _get_live_host_info(repo_path)
+    live_host = get_live_host_info(repo_path)
     if live_host is not None:
         console.print(already_running_message.format(url=live_host["host_url"]))
         if open_browser and not no_open:
@@ -559,7 +559,7 @@ def _create_host_web_app(
 ) -> FastAPI:
     """Create and configure the web application for the host."""
 
-    return web_app_module.create_app(
+    return create_app(
         db_path=db_path,
         repo_path=repo_path,
         watch=watch,
@@ -670,7 +670,7 @@ def _cleanup_host(repo_path: Path, storage: KuzuBackend) -> None:
 # ==================== Shared Host Runner ====================
 
 
-def _run_shared_host(
+def run_shared_host(
     port: int,
     bind: str,
     *,
