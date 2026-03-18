@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from os import walk
 from pathlib import Path
-from subprocess import CompletedProcess, TimeoutExpired
+from subprocess import CalledProcessError, CompletedProcess, TimeoutExpired
 from subprocess import run as subprocess_run
 
 from axon.config.ignore import DEFAULT_IGNORE_PATTERNS, should_ignore
@@ -57,7 +57,7 @@ def _discover_via_git(repo_path: Path, gitignore_patterns: list[str] | None) -> 
         )
         if result.returncode != 0:
             return
-    except (TimeoutExpired, FileNotFoundError):
+    except (TimeoutExpired, FileNotFoundError, CalledProcessError):
         return
 
     return _process_git_output(result, repo_path, gitignore_patterns)

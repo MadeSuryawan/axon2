@@ -70,8 +70,8 @@ class TestBuildCochangeMatrix:
             ["src/auth.py", "src/models.py"],
             ["src/views.py", "src/utils.py"],
         ]
-        coupler = Coupling(graph, Path("/fake/repo"))
-        matrix = coupler._build_cochange_matrix(commits, min_cochanges=1)
+        coupler = Coupling(graph, Path("/fake/repo"), min_cochanges=1)
+        matrix, total = coupler._build_cochange_matrix(commits)
 
         pair = ("src/auth.py", "src/models.py")
         assert pair in matrix
@@ -89,8 +89,8 @@ class TestBuildCochangeMatrix:
             ["src/auth.py", "src/models.py"],
             ["src/views.py", "src/utils.py"],
         ]
-        coupler = Coupling(graph, Path("/fake/repo"))
-        matrix = coupler._build_cochange_matrix(commits, min_cochanges=3)
+        coupler = Coupling(graph, Path("/fake/repo"), min_cochanges=3)
+        matrix, total = coupler._build_cochange_matrix(commits)
 
         # auth+models has 3 co-changes, should be included.
         assert ("src/auth.py", "src/models.py") in matrix
@@ -100,9 +100,10 @@ class TestBuildCochangeMatrix:
 
     def test_build_cochange_matrix_empty(self, graph: KnowledgeGraph) -> None:
         """Empty commits list returns an empty dict."""
-        coupler = Coupling(graph, Path("/fake/repo"))
-        matrix = coupler._build_cochange_matrix([], min_cochanges=1)
+        coupler = Coupling(graph, Path("/fake/repo"), min_cochanges=1)
+        matrix, total = coupler._build_cochange_matrix([])
         assert matrix == {}
+        assert total == {}
 
 
 # ---------------------------------------------------------------------------
@@ -165,8 +166,8 @@ class TestProcessCoupling:
             ["src/views.py", "src/utils.py"],
         ]
 
-        coupler = Coupling(graph, Path("/fake/repo"))
-        count = coupler.process_coupling(min_strength=0.3, commits=commits)
+        coupler = Coupling(graph, Path("/fake/repo"), min_strength=0.3, min_cochanges=1)
+        count = coupler.process_coupling(commits)
 
         # auth+models: coupling = 4 / max(5, 5) = 0.8 >= 0.3 -> created
         # views+utils: coupling = 1 / max(1, 1) = 1.0 >= 0.3 -> created
@@ -189,8 +190,8 @@ class TestProcessCoupling:
 
     def test_process_coupling_no_git(self, graph: KnowledgeGraph) -> None:
         """Non-git repo returns 0 gracefully (parse_git_log returns [])."""
-        coupler = Coupling(graph, Path("/nonexistent/repo"))
-        count = coupler.process_coupling(min_strength=0.3, commits=[])
+        coupler = Coupling(graph, Path("/nonexistent/repo"), min_strength=0.3)
+        count = coupler.process_coupling([])
         assert count == 0
 
         coupled_rels = graph.get_relationships_by_type(RelType.COUPLED_WITH)
@@ -220,8 +221,8 @@ class TestProcessCoupling:
             ["src/models.py"],
         ]
 
-        coupler = Coupling(graph, Path("/fake/repo"))
-        count = coupler.process_coupling(min_strength=0.3, commits=commits)
+        coupler = Coupling(graph, Path("/fake/repo"), min_strength=0.3)
+        count = coupler.process_coupling(commits)
         assert count == 0
 
     def test_process_coupling_relationship_id_format(
@@ -235,8 +236,8 @@ class TestProcessCoupling:
             ["src/auth.py", "src/models.py"],
         ]
 
-        coupler = Coupling(graph, Path("/fake/repo"))
-        coupler.process_coupling(min_strength=0.3, commits=commits)
+        coupler = Coupling(graph, Path("/fake/repo"), min_strength=0.3)
+        coupler.process_coupling(commits)
 
         coupled_rels = graph.get_relationships_by_type(RelType.COUPLED_WITH)
         assert len(coupled_rels) >= 1

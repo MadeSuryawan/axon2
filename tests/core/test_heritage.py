@@ -141,7 +141,7 @@ class TestProcessHeritageExtends:
                 [("Dog", "extends", "Animal")],
             ),
         ]
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         assert len(extends_rels) == 1
@@ -160,7 +160,7 @@ class TestProcessHeritageExtends:
                 [("Dog", "extends", "Animal")],
             ),
         ]
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         rel = extends_rels[0]
@@ -183,7 +183,7 @@ class TestProcessHeritageImplements:
                 [("User", "implements", "Serializable")],
             ),
         ]
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         impl_rels = graph.get_relationships_by_type(RelType.IMPLEMENTS)
         assert len(impl_rels) == 1
@@ -206,7 +206,7 @@ class TestProcessHeritageImplements:
                 [("User", "implements", "Serializable")],
             ),
         ]
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         impl_rels = graph.get_relationships_by_type(RelType.IMPLEMENTS)
         assert impl_rels[0].type == RelType.IMPLEMENTS
@@ -231,7 +231,7 @@ class TestProcessHeritageUnresolvedParent:
             ),
         ]
         # Should not raise.
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         assert len(extends_rels) == 0
@@ -246,7 +246,7 @@ class TestProcessHeritageUnresolvedParent:
                 [("Phantom", "extends", "Animal")],
             ),
         ]
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         assert len(extends_rels) == 0
@@ -282,7 +282,7 @@ class TestProcessHeritageMultiple:
                 ],
             ),
         ]
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         impl_rels = graph.get_relationships_by_type(RelType.IMPLEMENTS)
@@ -316,7 +316,7 @@ class TestProcessHeritageMultiple:
                 ],
             ),
         ]
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         user_id = generate_id(NodeLabel.CLASS, "src/models.ts", "User")
 
@@ -343,7 +343,7 @@ class TestProtocolAnnotation:
                 [("Animal", "extends", "Protocol")],
             ),
         ]
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         animal_id = generate_id(NodeLabel.CLASS, "src/models.py", "Animal")
         animal = graph.get_node(animal_id)
@@ -357,7 +357,7 @@ class TestProtocolAnnotation:
                 [("Animal", "extends", "ABC")],
             ),
         ]
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         animal_id = generate_id(NodeLabel.CLASS, "src/models.py", "Animal")
         animal = graph.get_node(animal_id)
@@ -371,7 +371,7 @@ class TestProtocolAnnotation:
                 [("Dog", "extends", "UnknownBase")],
             ),
         ]
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         dog_id = generate_id(NodeLabel.CLASS, "src/models.py", "Dog")
         dog = graph.get_node(dog_id)
@@ -386,7 +386,7 @@ class TestProtocolAnnotation:
                 [("Animal", "extends", "Protocol")],
             ),
         ]
-        Heritage(graph, parse_data).process_heritage()
+        Heritage(graph, parse_data, {}).process_heritage()
 
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         assert len(extends_rels) == 0

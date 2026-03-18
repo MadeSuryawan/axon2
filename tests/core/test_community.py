@@ -112,7 +112,7 @@ class TestExportToIgraph:
     def test_export_to_igraph(self, two_cluster_graph: KnowledgeGraph) -> None:
         """Correct vertex and edge count for the two-cluster fixture."""
         community = Community(two_cluster_graph)
-        ig_graph, index_map = community._export_to_igraph(two_cluster_graph)
+        ig_graph, index_map = community.export_to_igraph()
 
         # 6 function nodes total.
         assert ig_graph.vcount() == 6
@@ -125,7 +125,7 @@ class TestExportToIgraph:
         """Empty graph produces an empty igraph."""
         g = KnowledgeGraph()
         community = Community(g)
-        ig_graph, index_map = community._export_to_igraph(g)
+        ig_graph, index_map = community.export_to_igraph()
 
         assert ig_graph.vcount() == 0
         assert ig_graph.ecount() == 0

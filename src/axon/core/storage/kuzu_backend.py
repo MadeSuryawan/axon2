@@ -18,7 +18,7 @@ from logging import getLogger
 from math import isfinite
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from threading import Lock
+from threading import RLock
 from time import sleep
 from typing import Any
 
@@ -123,7 +123,9 @@ class _Helpers:
     # === Instance state (shared with KuzuBackend via composition) ===
     _db: Database | None
     _conn: Connection | None
-    _lock: Lock
+    # Using RLock to prevent deadlocks when methods call each other
+    # (e.g., vector_search -> _fetch_node_metadata -> _query_nodes all need the lock)
+    _lock: RLock
     _nodes_count: int
     _table_count: int
 
@@ -757,7 +759,9 @@ class KuzuBackend(_Helpers):
     def __init__(self) -> None:
         self._db: Database | None = None
         self._conn: Connection | None = None
-        self._lock = Lock()
+        # Using RLock to prevent deadlocks when methods call each other
+        # (e.g., vector_search -> _fetch_node_metadata -> _query_nodes all need the lock)
+        self._lock: RLock = RLock()
         self._nodes_count: int = 0
         self._table_count: int = len(_NODE_TABLE_NAMES)
 

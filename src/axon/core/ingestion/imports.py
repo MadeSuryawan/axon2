@@ -53,6 +53,7 @@ class Imports:
         self,
         graph: KnowledgeGraph,
         parse_data: list[FileParseData],
+        file_index: dict[str, str] | None = None,
     ) -> None:
         """
         Initialize the Imports analyzer.
@@ -64,7 +65,7 @@ class Imports:
         """
         self._graph = graph
         self._parse_data = parse_data
-        self._file_index: dict[str, str] = self.build_file_index()
+        self._file_index: dict[str, str] = file_index or self.build_file_index()
         self._workers: int = min(cpu_count() or 4, 8, len(self._parse_data))
 
     def process_imports(

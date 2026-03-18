@@ -14,7 +14,7 @@ from axon.core.graph.model import (
 )
 from axon.core.ingestion.parser_phase import FileParseData
 from axon.core.ingestion.symbol_lookup import build_name_index
-from axon.core.ingestion.types import process_types
+from axon.core.ingestion.types import Types
 
 _TYPE_LABELS = (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.TYPE_ALIAS)
 from axon.core.parsers.base import ParseResult, TypeRef
@@ -280,7 +280,7 @@ class TestProcessTypesCreatesUsesType:
         graph: KnowledgeGraph,
         parse_data: list[FileParseData],
     ) -> None:
-        process_types(parse_data, graph)
+        Types(parse_data, graph, build_name_index(graph, _TYPE_LABELS)).process_types()
 
         uses_rels = graph.get_relationships_by_type(RelType.USES_TYPE)
         assert len(uses_rels) == 2
@@ -313,7 +313,7 @@ class TestProcessTypesRoleProperty:
         graph: KnowledgeGraph,
         parse_data: list[FileParseData],
     ) -> None:
-        process_types(parse_data, graph)
+        Types(parse_data, graph, build_name_index(graph, _TYPE_LABELS)).process_types()
 
         uses_rels = graph.get_relationships_by_type(RelType.USES_TYPE)
 
@@ -351,7 +351,7 @@ class TestProcessTypesUnresolvedSkipped:
             ),
         ]
 
-        process_types(unresolved_data, graph)
+        Types(unresolved_data, graph, build_name_index(graph, _TYPE_LABELS)).process_types()
 
         uses_rels = graph.get_relationships_by_type(RelType.USES_TYPE)
         assert len(uses_rels) == 0
@@ -383,7 +383,7 @@ class TestProcessTypesNoDuplicates:
             ),
         ]
 
-        process_types(duplicate_data, graph)
+        Types(duplicate_data, graph, build_name_index(graph, _TYPE_LABELS)).process_types()
 
         uses_rels = graph.get_relationships_by_type(RelType.USES_TYPE)
         # Both refs resolve to validate -> User with role "param", but only
@@ -415,7 +415,7 @@ class TestProcessTypesReturnType:
             ),
         ]
 
-        process_types(return_data, graph)
+        Types(return_data, graph, build_name_index(graph, _TYPE_LABELS)).process_types()
 
         uses_rels = graph.get_relationships_by_type(RelType.USES_TYPE)
         assert len(uses_rels) == 1

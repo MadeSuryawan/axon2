@@ -12,7 +12,7 @@ from axon.core.graph.model import (
     RelType,
     generate_id,
 )
-from axon.core.ingestion.calls import Calls
+from axon.core.ingestion.calls import Calls, ResolveCallParams
 from axon.core.ingestion.parser_phase import FileParseData
 from axon.core.ingestion.symbol_lookup import build_name_index
 from axon.core.parsers.base import CallInfo, ParseResult
@@ -209,10 +209,18 @@ class TestResolveCallSameFile:
     def test_resolve_call_same_file(self, graph: KnowledgeGraph) -> None:
         call = CallInfo(name="hash_password", line=5)
         # Instantiate Calls and set state for testing resolution
-        calls_obj = Calls([], graph)
+        calls_obj = Calls([], graph, build_name_index(graph, _CALLABLE_LABELS))
         calls_obj._file_path = "src/auth.py"
+        params = ResolveCallParams(
+            call=call,
+            file_path="src/auth.py",
+            call_index=build_name_index(graph, _CALLABLE_LABELS),
+            graph=graph,
+            caller_class_name=None,
+            import_cache=None,
+        )
 
-        target_id, confidence = calls_obj._resolve_call(call)
+        target_id, confidence = calls_obj._resolve_call(params)
 
         expected_id = generate_id(
             NodeLabel.FUNCTION,
@@ -234,10 +242,18 @@ class TestResolveCallGlobal:
     def test_resolve_call_global(self, graph: KnowledgeGraph) -> None:
         call = CallInfo(name="validate", line=8)
         # Instantiate Calls and set state for testing resolution
-        calls_obj = Calls([], graph)
+        calls_obj = Calls([], graph, build_name_index(graph, _CALLABLE_LABELS))
         calls_obj._file_path = "src/app.py"
+        params = ResolveCallParams(
+            call=call,
+            file_path="src/app.py",
+            call_index=build_name_index(graph, _CALLABLE_LABELS),
+            graph=graph,
+            caller_class_name=None,
+            import_cache=None,
+        )
 
-        target_id, confidence = calls_obj._resolve_call(call)
+        target_id, confidence = calls_obj._resolve_call(params)
 
         expected_id = generate_id(
             NodeLabel.FUNCTION,
@@ -259,10 +275,18 @@ class TestResolveCallUnresolved:
     def test_resolve_call_unresolved(self, graph: KnowledgeGraph) -> None:
         call = CallInfo(name="nonexistent_function", line=3)
         # Instantiate Calls and set state for testing resolution
-        calls_obj = Calls([], graph)
+        calls_obj = Calls([], graph, build_name_index(graph, _CALLABLE_LABELS))
         calls_obj._file_path = "src/auth.py"
+        params = ResolveCallParams(
+            call=call,
+            file_path="src/auth.py",
+            call_index=build_name_index(graph, _CALLABLE_LABELS),
+            graph=graph,
+            caller_class_name=None,
+            import_cache=None,
+        )
 
-        target_id, confidence = calls_obj._resolve_call(call)
+        target_id, confidence = calls_obj._resolve_call(params)
 
         assert target_id is None
         assert confidence == 0.0
@@ -281,7 +305,7 @@ class TestProcessCallsCreatesRelationships:
         graph: KnowledgeGraph,
         parse_data: list[FileParseData],
     ) -> None:
-        Calls(parse_data, graph).process_calls()
+        Calls(parse_data, graph, build_name_index(graph, _CALLABLE_LABELS)).process_calls()
 
         calls_rels = graph.get_relationships_by_type(RelType.CALLS)
         assert len(calls_rels) == 2
@@ -320,7 +344,7 @@ class TestProcessCallsConfidence:
         graph: KnowledgeGraph,
         parse_data: list[FileParseData],
     ) -> None:
-        Calls(parse_data, graph).process_calls()
+        Calls(parse_data, graph, build_name_index(graph, _CALLABLE_LABELS)).process_calls()
 
         calls_rels = graph.get_relationships_by_type(RelType.CALLS)
 
@@ -370,7 +394,11 @@ class TestProcessCallsNoDuplicates:
             ),
         ]
 
-        Calls(duplicate_parse_data, graph).process_calls()
+        Calls(
+            duplicate_parse_data,
+            graph,
+            build_name_index(graph, _CALLABLE_LABELS),
+        ).process_calls()
 
         calls_rels = graph.get_relationships_by_type(RelType.CALLS)
         # Both calls resolve to validate -> hash_password, but only one
@@ -425,9 +453,17 @@ class TestResolveMethodCallSelf:
 
         call = CallInfo(name="check_token", line=10, receiver="self")
 
-        calls_obj = Calls([], g)
+        calls_obj = Calls([], g, build_name_index(g, _CALLABLE_LABELS))
         calls_obj._file_path = "src/service.py"
-        target_id, confidence = calls_obj._resolve_call(call)
+        params = ResolveCallParams(
+            call=call,
+            file_path="src/service.py",
+            call_index=build_name_index(g, _CALLABLE_LABELS),
+            graph=g,
+            caller_class_name="AuthService",
+            import_cache=None,
+        )
+        target_id, confidence = calls_obj._resolve_call(params)
 
         expected_id = generate_id(
             NodeLabel.METHOD,
@@ -466,9 +502,17 @@ class TestResolveMethodCallSelf:
 
         call = CallInfo(name="checkToken", line=10, receiver="this")
 
-        calls_obj = Calls([], g)
+        calls_obj = Calls([], g, build_name_index(g, _CALLABLE_LABELS))
         calls_obj._file_path = "src/service.ts"
-        target_id, confidence = calls_obj._resolve_call(call)
+        params = ResolveCallParams(
+            call=call,
+            file_path="src/service.ts",
+            call_index=build_name_index(g, _CALLABLE_LABELS),
+            graph=g,
+            caller_class_name="AuthService",
+            import_cache=None,
+        )
+        target_id, confidence = calls_obj._resolve_call(params)
 
         expected_id = generate_id(
             NodeLabel.METHOD,
@@ -530,9 +574,17 @@ class TestResolveCallImportResolved:
 
         call = CallInfo(name="validate", line=8)
 
-        calls_obj = Calls([], g)
+        calls_obj = Calls([], g, build_name_index(g, _CALLABLE_LABELS))
         calls_obj._file_path = "src/app.py"
-        target_id, confidence = calls_obj._resolve_call(call)
+        params = ResolveCallParams(
+            call=call,
+            file_path="src/app.py",
+            call_index=build_name_index(g, _CALLABLE_LABELS),
+            graph=g,
+            caller_class_name=None,
+            import_cache=None,
+        )
+        target_id, confidence = calls_obj._resolve_call(params)
 
         expected_id = generate_id(
             NodeLabel.FUNCTION,
@@ -586,7 +638,7 @@ class TestCallBlocklist:
             ),
         ]
 
-        Calls(parse_data, g).process_calls()
+        Calls(parse_data, g, build_name_index(g, _CALLABLE_LABELS)).process_calls()
         calls_rels = g.get_relationships_by_type(RelType.CALLS)
         assert len(calls_rels) == 0
 
@@ -608,7 +660,7 @@ class TestCallBlocklist:
             ),
         ]
 
-        Calls(parse_data, g).process_calls()
+        Calls(parse_data, g, build_name_index(g, _CALLABLE_LABELS)).process_calls()
         calls_rels = g.get_relationships_by_type(RelType.CALLS)
         # apply_func is not in the graph so no edge for it; 'str' is blocklisted.
         assert len(calls_rels) == 0
@@ -630,6 +682,6 @@ class TestCallBlocklist:
             ),
         ]
 
-        Calls(parse_data, g).process_calls()
+        Calls(parse_data, g, build_name_index(g, _CALLABLE_LABELS)).process_calls()
         calls_rels = g.get_relationships_by_type(RelType.CALLS)
         assert len(calls_rels) == 1

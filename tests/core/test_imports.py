@@ -162,7 +162,7 @@ class TestResolvePythonParentRelative:
         parse_data: list[FileParseData],
         file_index: dict[str, str],
     ) -> None:
-        imports_handler = Imports(graph, parse_data, file_index)
+        imports_handler = Imports(graph, parse_data, file_index=file_index)
         imp = ImportInfo(module="..models", names=["User"], is_relative=True)
         result = imports_handler._resolve_import_path("src/auth/validate.py", imp)
 

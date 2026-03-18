@@ -793,7 +793,7 @@ class TestReindexEndpoint:
         assert "watch" in response.json()["detail"].lower()
 
     def test_reindex_success(self, client_with_repo: TestClient) -> None:
-        with patch("axon.web.routes.analysis.run_pipeline"):
+        with patch("axon.web.routes.analysis.Pipelines", autospec=True):
             response = client_with_repo.post("/reindex")
 
         assert response.status_code == 200

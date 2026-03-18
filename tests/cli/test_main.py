@@ -8,7 +8,8 @@ import pytest
 from typer.testing import CliRunner
 
 from axon import __version__
-from axon.cli.main import _register_in_global_registry, app
+from axon.cli.helpers.checker import _register_in_global_registry
+from axon.cli.main import app
 
 runner = CliRunner()
 
@@ -108,7 +109,7 @@ class TestListRepos:
     def test_list_calls_handle_list_repos(self) -> None:
         """List should call handle_list_repos and print the result."""
         with patch(
-            "axon.mcp.tools.Tools.handle_list_repos",
+            "axon.mcp.tools.MCPTools.handle_list_repos",
             return_value="Indexed repositories (1):\n\n  1. my-project",
         ):
             result = runner.invoke(app, ["list"])
@@ -134,10 +135,13 @@ class TestClean:
     def test_clean_no_index(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Clean should error when no .axon directory exists."""
         monkeypatch.chdir(tmp_path)
-        # Check directly without calling _get_path which creates the directory
-        result = runner.invoke(app, ["clean", "--force"])
+        with (
+            patch("axon.cli.main.get_path", return_value=(tmp_path, tmp_path / ".axon", None)),
+            patch("axon.cli.main.HostRunner.maybe_notify_update"),
+        ):
+            result = runner.invoke(app, ["clean", "--force"])
         assert result.exit_code == 1
-        assert "No index found" in result.output or "Nothing to clean" in result.output
+        assert "No index found" in result.output
 
     def test_clean_with_force(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Clean with --force should delete .axon without confirmation."""
@@ -177,9 +181,9 @@ class TestQuery:
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
         with (
-            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch("axon.cli.main.load_storage", return_value=mock_storage),
             patch(
-                "axon.mcp.tools.Tools.handle_query",
+                "axon.mcp.tools.MCPTools.handle_query",
                 return_value="1. MyClass (Class) -- src/main.py",
             ),
         ):
@@ -203,9 +207,9 @@ class TestContext:
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
         with (
-            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch("axon.cli.main.load_storage", return_value=mock_storage),
             patch(
-                "axon.mcp.tools.Tools.handle_context",
+                "axon.mcp.tools.MCPTools.handle_context",
                 return_value="Symbol: MyClass (Class)\nFile: src/main.py:1-50",
             ),
         ):
@@ -229,9 +233,9 @@ class TestImpact:
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
         with (
-            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch("axon.cli.main.load_storage", return_value=mock_storage),
             patch(
-                "axon.mcp.tools.Tools.handle_impact",
+                "axon.mcp.tools.MCPTools.handle_impact",
                 return_value="Impact analysis for: MyClass.method",
             ),
         ):
@@ -244,9 +248,9 @@ class TestImpact:
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
         with (
-            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch("axon.cli.main.load_storage", return_value=mock_storage),
             patch(
-                "axon.mcp.tools.Tools.handle_impact",
+                "axon.mcp.tools.MCPTools.handle_impact",
                 return_value="Impact analysis for: foo",
             ),
         ):
@@ -269,9 +273,9 @@ class TestDeadCode:
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
         with (
-            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch("axon.cli.main.load_storage", return_value=mock_storage),
             patch(
-                "axon.mcp.tools.Tools.handle_dead_code",
+                "axon.mcp.tools.MCPTools.handle_dead_code",
                 return_value="No dead code detected.",
             ),
         ):
@@ -295,9 +299,9 @@ class TestCypher:
         monkeypatch.chdir(tmp_path)
         mock_storage = MagicMock()
         with (
-            patch("axon.cli.main._load_storage", return_value=mock_storage),
+            patch("axon.cli.main.load_storage", return_value=mock_storage),
             patch(
-                "axon.mcp.tools.Tools.handle_cypher",
+                "axon.mcp.tools.MCPTools.handle_cypher",
                 return_value="Results (3 rows):\n\n  1. foo",
             ),
         ):

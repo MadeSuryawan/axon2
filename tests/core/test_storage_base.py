@@ -130,6 +130,10 @@ class _DummyBackend:
     ) -> list[tuple[GraphNode, int]]:
         return []
 
+    async def fts_search_async(self, query: str, limit: int) -> list[SearchResult]:
+        """Full-text search across indexed node content."""
+        return []
+
     def get_process_memberships(self, node_ids: list[str]) -> dict[str, str]:
         return {}
 
@@ -167,6 +171,14 @@ class _DummyBackend:
 
     def delete_synthetic_nodes(self) -> None:
         pass
+
+    def get_file_index(self) -> dict[str, str]:
+        """Return ``{file_path: node_id}`` for all File nodes."""
+        return {}
+
+    def get_symbol_name_index(self) -> dict[str, list[str]]:
+        """Return ``{symbol_name: [node_id, ...]}`` for callable/type symbols."""
+        return {}
 
     def upsert_embeddings(self, embeddings: list[NodeEmbedding]) -> None:
         pass

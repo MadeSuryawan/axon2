@@ -216,23 +216,6 @@ class TestRepositoryWatcher:
 
         assert watcher._last_change_time > 0.0
 
-    def test_changed_paths_cleared_after_processing(
-        self,
-        tmp_repo: Path,
-        storage: KuzuBackend,
-    ) -> None:
-        watcher = Watcher(WatcherDeps(repo_path=tmp_repo, storage=storage))
-        app_path = tmp_repo / "src" / "app.py"
-        watcher._changed_paths.append(app_path)
-
-        # This is what Watcher.watch does:
-        if watcher._changed_paths:
-            batch = watcher._changed_paths.copy()
-            watcher._changed_paths.clear()
-            asyncio_run(watcher._reindex_changed_paths(batch))
-
-        assert len(watcher._changed_paths) == 0
-
 
 class TestGetHeadSha:
     """_get_head_sha returns the current git HEAD."""

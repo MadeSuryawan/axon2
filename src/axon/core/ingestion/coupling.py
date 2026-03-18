@@ -50,6 +50,8 @@ class Coupling:
         graph: KnowledgeGraph,
         repo_path: Path,
         file_nodes: list[GraphNode] | None = None,
+        min_cochanges: int = 3,
+        min_strength: float = 0.3,
     ) -> None:
         """
         Initialize the Coupling analyzer.
@@ -59,6 +61,8 @@ class Coupling:
             repo_path: Root of the git repository to analyze.
             file_nodes: List of file nodes to analyze.
                 When ``None``, all ``File`` nodes in the graph are used.
+            min_cochanges: Minimum co-change count to include a pair.
+            min_strength: Minimum coupling strength to create a relationship.
         """
         self._graph = graph
         self._repo_path = repo_path
@@ -67,8 +71,8 @@ class Coupling:
         )
         self._graph_files: set[str] = {n.file_path for n in self._file_nodes}
         self._path_to_id: dict[str, str] = {n.file_path: n.id for n in self._file_nodes}
-        self._min_cochanges: int = 3
-        self._min_strength: float = 0.3
+        self._min_cochanges: int = min_cochanges
+        self._min_strength: float = min_strength
 
     def resolve_coupling(self, commits: list[list[str]] | None = None) -> list[ResolvedEdge]:
         """
