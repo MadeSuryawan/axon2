@@ -1,8 +1,9 @@
 """Cypher query execution route — read-only raw Cypher against the graph."""
 
-import re
-import time
 from logging import getLogger
+from re import DOTALL, IGNORECASE
+from re import search as re_search
+from time import perf_counter
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -27,10 +28,10 @@ def _extract_return_columns(query: str) -> list[str]:
     Handles aliases (``AS name``), dotted properties (``n.name``), and
     function calls (``count(n)``).
     """
-    match = re.search(
+    match = re_search(
         r"\bRETURN\b\s+(.*?)(?:\bORDER\b|\bLIMIT\b|\bSKIP\b|$)",
         query,
-        re.IGNORECASE | re.DOTALL,
+        IGNORECASE | DOTALL,
     )
     if not match:
         return []
@@ -38,12 +39,12 @@ def _extract_return_columns(query: str) -> list[str]:
     return_expr = match.group(1).strip()
     columns = []
     for part in return_expr.split(","):
-        part = part.strip()
-        alias_match = re.search(r"\bAS\s+(\w+)\s*$", part, re.IGNORECASE)
+        stripped_part = part.strip()
+        alias_match = re_search(r"\bAS\s+(\w+)\s*$", stripped_part, IGNORECASE)
         if alias_match:
             columns.append(alias_match.group(1))
         else:
-            columns.append(part)
+            columns.append(stripped_part)
 
     return columns
 
@@ -65,12 +66,12 @@ def execute_cypher(body: CypherRequest, request: Request) -> dict:
 
     columns = _extract_return_columns(body.query)
 
-    start = time.perf_counter()
+    start = perf_counter()
     try:
         rows = storage.execute_raw(body.query)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Cypher query failed: {exc}") from exc
-    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+    duration_ms = round((perf_counter() - start) * 1000, 2)
 
     if rows is None:
         rows = []
