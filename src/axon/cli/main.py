@@ -1,6 +1,7 @@
 """Axon CLI — Graph-powered code intelligence engine."""
 
 from asyncio import run as asyncio_run
+from asyncio import set_event_loop_policy
 from contextlib import suppress
 from json import dumps, loads
 from logging import ERROR, WARNING, basicConfig, getLogger
@@ -33,16 +34,16 @@ from axon.mcp.tools import MCPTools
 if platform in ("win32", "cygwin", "cli"):
     with suppress(ImportError):
         # will not installed on macOS/Linux, ignored Pyrefly(missing-import) error
-        from winloop import install as winloop_install  # type: ignore[import]
+        from winloop import EventLoopPolicy  # type: ignore[import]
 
-        winloop_install()
+        set_event_loop_policy(EventLoopPolicy())
         rprint("[b blue]Event loop policy: [b green]winloop (Windows)")
 else:
     with suppress(ImportError):
         # will not installed on Windows, ignored Pyrefly(missing-import) error
-        from uvloop import install as uvloop_install  # type: ignore[import]
+        from uvloop import EventLoopPolicy  # type: ignore[import]
 
-        uvloop_install()
+        set_event_loop_policy(EventLoopPolicy())
         rprint("[b blue]Event loop policy: [b green]uvloop (Linux/macOS)")
 
 basicConfig(
