@@ -188,19 +188,19 @@ class Pipelines:
 
     def _phase_5_to_7(self) -> None:
         with ThreadPoolExecutor(max_workers=4) as pool:
-            rprint("\t[b blue]Resolving calls...")
+            rprint("\t[b dim]Resolving calls...")
             calls_f = pool.submit(
                 Calls(self._parsed_data, self._graph, self._name_index).process_calls,
                 parallel=False,
                 collect=True,
             )
-            rprint("\t[b blue]Resolving heritage...")
+            rprint("\t[b dim]Resolving heritage...")
             heritage_f = pool.submit(
                 Heritage(self._graph, self._parsed_data, self._name_index).process_heritage,
                 parallel=False,
                 collect=True,
             )
-            rprint("\t[b blue]Resolving types...")
+            rprint("\t[b dim]Resolving types...")
             types_f = pool.submit(
                 Types(self._parsed_data, self._graph, self._name_index).process_types,
                 parallel=False,
