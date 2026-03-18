@@ -10,12 +10,13 @@ Community, Process) are deliberately skipped — they lack the semantic
 richness that makes embedding worthwhile.
 """
 
+from pathlib import Path
 from threading import Lock
 
 from fastembed import TextEmbedding
 from fastembed.common.types import NumpyArray
 
-from axon.config.constants import MODEL_NAME
+from axon.config.model_config import get_model_for_embedding
 from axon.config.progress_bar import p_bar
 from axon.core.embeddings.text import build_class_method_index, generate_text
 from axon.core.graph.graph import KnowledgeGraph
@@ -26,15 +27,32 @@ _model_cache: dict[str, TextEmbedding] = {}
 _model_lock = Lock()
 
 
-def get_model() -> TextEmbedding:
-    if cached := _model_cache.get(MODEL_NAME):
+def get_model(repo_path: Path | None = None, model_name: str | None = None) -> TextEmbedding:
+    """
+    Get or create a TextEmbedding model.
+
+    Args:
+        repo_path: Optional path to the repository. Used to read model config.
+            If not provided, falls back to default model or cwd config.
+        model_name: Optional model name override. If not provided, reads from
+            the repository config or falls back to the default.
+
+    Returns:
+        A cached or newly created TextEmbedding instance.
+    """
+    # Determine which model to use
+    effective_model = model_name
+    if effective_model is None:
+        effective_model = get_model_for_embedding(repo_path)
+
+    if cached := _model_cache.get(effective_model):
         return cached
     with _model_lock:
-        if cached := _model_cache.get(MODEL_NAME):
+        if cached := _model_cache.get(effective_model):
             return cached
 
-        model = TextEmbedding(model_name=MODEL_NAME)
-        _model_cache[MODEL_NAME] = model
+        model = TextEmbedding(model_name=effective_model)
+        _model_cache[effective_model] = model
         return model
 
 
@@ -60,13 +78,13 @@ EMBEDDABLE_LABELS: frozenset[NodeLabel] = frozenset(
 )
 
 
-def embed_query(query: str) -> list[float] | None:
+def embed_query(query: str, repo_path: Path | None = None) -> list[float] | None:
     """Embed a single query string, returning ``None`` on failure."""
     if not query or not query.strip():
         return
 
     try:
-        model = get_model()
+        model = get_model(repo_path)
         return list(next(iter(model.embed([query]))))
     except (RuntimeError, ConnectionError, SystemError, OSError, TimeoutError):
         return
@@ -75,6 +93,7 @@ def embed_query(query: str) -> list[float] | None:
 def embed_graph(
     graph: KnowledgeGraph,
     batch_size: int = 64,
+    repo_path: Path | None = None,
 ) -> list[NodeEmbedding]:
     """
     Generate embeddings for all embeddable nodes in the graph.
@@ -86,6 +105,8 @@ def embed_graph(
     Args:
         graph: The knowledge graph whose nodes should be embedded.
         batch_size: Number of texts to encode per batch.  Defaults to 64.
+        repo_path: Optional path to the repository. Used to read model config.
+            If not provided, falls back to default model.
 
     Returns:
         A list of :class:`NodeEmbedding` instances, one per embeddable node,
@@ -108,7 +129,7 @@ def embed_graph(
     if not texts:
         return []
 
-    model = get_model()
+    model = get_model(repo_path)
     return [
         NodeEmbedding(node_id=node.id, embedding=vector.tolist())
         for node, vector in zip(nodes, _embed_texts(texts, batch_size, model), strict=True)
@@ -130,6 +151,7 @@ def _embed_texts(texts: list[str], batch_size: int, model: TextEmbedding) -> lis
 def embed_nodes(
     graph: KnowledgeGraph,
     node_ids: set[str],
+    repo_path: Path | None = None,
     batch_size: int = 64,
 ) -> list[NodeEmbedding]:
     """Like :func:`embed_graph`, but only for the given *node_ids*."""
@@ -154,7 +176,7 @@ def embed_nodes(
     if not texts:
         return []
 
-    model = get_model()
+    model = get_model(repo_path)
     embeddings: list[NodeEmbedding] = []
     for node, vector in zip(valid_nodes, model.embed(texts, batch_size=batch_size), strict=True):
         embeddings.append(

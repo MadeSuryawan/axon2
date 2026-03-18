@@ -409,7 +409,7 @@ class Watcher:
 
         logger.info("Re-embedding %d nodes...", len(dirty_node_ids))
         try:
-            if not (embedded := embed_nodes(graph, dirty_node_ids)):
+            if not (embedded := embed_nodes(graph, dirty_node_ids, repo_path=self._repo_path)):
                 return
 
             self._storage.upsert_embeddings(embedded)

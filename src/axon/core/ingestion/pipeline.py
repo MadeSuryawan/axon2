@@ -369,7 +369,7 @@ class Pipelines:
         """Generate new embeddings and save them to file."""
         rprint("\n[b blue]Generating new embeddings...")
         try:
-            node_embeddings = embed_graph(self._graph)
+            node_embeddings = embed_graph(self._graph, repo_path=self._repo_path)
             self._save_embeddings_to_file(node_embeddings)
         except (RuntimeError, ValueError, OSError, SystemError):
             logger.warning(

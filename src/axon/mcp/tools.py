@@ -18,7 +18,7 @@ from re import MULTILINE
 from re import compile as re_compile
 from typing import Any, cast
 
-from axon.config.constants import MODEL_NAME, SYSTEM_EXCEPTIONS
+from axon.config.constants import SYSTEM_EXCEPTIONS
 from axon.core.cypher_guard import WRITE_KEYWORDS, sanitize_cypher
 from axon.core.embeddings.embedder import embed_query
 from axon.core.graph.model import GraphNode
@@ -62,7 +62,6 @@ class _Helpers:
 
     # Class-level constants for maximum flow size limits
     _MAX_TRAVERSE_DEPTH: int = MAX_TRAVERSE_DEPTH
-    _EMBED_MODEL_NAME: str = MODEL_NAME
     _SNIPPET_MAX_LENGTH: int = 200
 
     # =============================================================================

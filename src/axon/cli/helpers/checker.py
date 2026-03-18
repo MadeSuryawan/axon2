@@ -6,12 +6,22 @@ from logging import getLogger
 from pathlib import Path
 from shutil import rmtree
 from sys import stderr
+from threading import Event, Thread
 from typing import Any
 
 from rich import print as rprint
+from rich.prompt import Prompt
 from typer import Exit, Option
 
 from axon import __version__
+from axon.config.constants import SYSTEM_EXCEPTIONS
+from axon.config.model_config import (
+    DEFAULT_MODEL,
+    LARGE_MODEL,
+    MODEL_CHOICES,
+    MODEL_OPTIONS,
+    set_model_name,
+)
 from axon.core.ingestion.pipeline import PipelineResult, Pipelines
 from axon.core.storage.kuzu_backend import KuzuBackend
 
@@ -86,6 +96,90 @@ def report(result: PipelineResult) -> None:
     rprint(f"  Duration:       {result.duration_seconds:.2f}s")
 
 
+def _run_thread() -> dict[str, Any]:
+    """Run a thread to read input with timeout."""
+
+    result: dict[str, Any] = {"value": None, "ready": Event()}
+
+    def _read_input() -> None:
+        try:
+            result["value"] = Prompt.ask(
+                "[bold blue]Enter your choice[/bold blue]",
+                default="small",
+                choices=MODEL_CHOICES,
+                show_choices=False,
+            )
+        except (KeyboardInterrupt, EOFError):
+            result["value"] = None
+        finally:
+            _event: Event = result["ready"]
+            _event.set()
+
+    # Start input thread
+    input_thread = Thread(target=_read_input, daemon=True)
+    input_thread.start()
+
+    return result
+
+
+def _choose_model(repo_path: Path, *, _timeout_seconds: float = 10.0) -> str:
+    """
+    Interactive model selection with validation and helpful feedback.
+
+    Args:
+        repo_path: Path to store the model configuration.
+        _timeout_seconds: Timeout in seconds for user input (default: 30).
+
+    Returns:
+        The selected model name string.
+    """
+
+    # Display available models with descriptions
+    rprint("\n[bold cyan]Select an embedding model:[/bold cyan]")
+    rprint(f"  [1] [bold]small[/bold] - {DEFAULT_MODEL}")
+    rprint("      → Faster inference, smaller memory footprint")
+    rprint(f"  [2] [bold]large[/bold] - {LARGE_MODEL}")
+    rprint("      → Higher quality embeddings, slower inference")
+    rprint(
+        f"\n[dim]Default: small (press Enter to accept, times out in {_timeout_seconds:.0f}s)[/dim]\n",
+    )
+
+    result = _run_thread()
+    # Wait for input or timeout
+    if not result["ready"].wait(timeout=_timeout_seconds):
+        rprint(f"\n[yellow]⏱ Timeout! Using default model:[/yellow] {DEFAULT_MODEL}\n")
+        return DEFAULT_MODEL
+
+    try:
+        if not (choice := result["value"]):
+            # User pressed Ctrl+C or stdin was closed
+            rprint(
+                f"\n[yellow]Selection cancelled. Using default model:[/yellow] {DEFAULT_MODEL}\n",
+            )
+            return DEFAULT_MODEL
+
+        # Map choice to model name
+        model_name = MODEL_OPTIONS.get(choice.lower(), DEFAULT_MODEL)
+
+        # Display confirmation
+        if choice.lower() in ["small", "s"]:
+            rprint(f"[b green]✓[/b green] Selected: [bold]{model_name}[/bold] (fast mode)")
+        else:
+            rprint(f"[b green]✓[/b green] Selected: [bold]{model_name}[/bold] (quality mode)")
+
+        # Save the selection if repo_path is provided
+        if repo_path:
+            set_model_name(model_name, repo_path)
+            rprint("[dim]Model preference saved to configuration[/dim]\n")
+
+        return model_name
+
+    except SYSTEM_EXCEPTIONS:
+        # Handle any unexpected errors gracefully
+        rprint(f"[yellow]Using default model: {DEFAULT_MODEL}[/yellow]")
+        return DEFAULT_MODEL
+
+
 def process_meta(
     axon_dir: Path,
     repo_path: Path,
@@ -98,6 +192,9 @@ def process_meta(
     ),
 ) -> PipelineResult:
     """Check if meta.json exists, and if not, run initial indexing."""
+
+    if not no_embeddings:
+        _choose_model(repo_path)
 
     pipelines = Pipelines(repo_path, storage, full=True, embeddings=not no_embeddings)
     pipelines.run_pipelines()
