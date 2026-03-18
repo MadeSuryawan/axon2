@@ -1,7 +1,5 @@
 """Tests for the call tracing phase (Phase 5)."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 import pytest

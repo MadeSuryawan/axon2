@@ -1,7 +1,5 @@
 """Shared runtime state for Axon host processes."""
 
-from __future__ import annotations
-
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path

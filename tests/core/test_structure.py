@@ -1,7 +1,5 @@
 """Tests for the structure processor (Phase 2)."""
 
-from __future__ import annotations
-
 import pytest
 
 from axon.core.graph.graph import KnowledgeGraph

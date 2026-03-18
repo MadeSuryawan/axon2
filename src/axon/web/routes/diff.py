@@ -1,9 +1,7 @@
 """Branch diff route — structural comparison between two git refs."""
 
-from __future__ import annotations
-
-import logging
 import re
+from logging import getLogger
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
@@ -11,7 +9,7 @@ from pydantic import BaseModel, field_validator
 from axon.core.diff import diff_branches
 from axon.web.routes.graph import _serialize_edge, _serialize_node
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 router = APIRouter(tags=["diff"])
 

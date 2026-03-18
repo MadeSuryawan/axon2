@@ -1,7 +1,5 @@
 """Host metadata route for shared Axon host discovery."""
 
-from __future__ import annotations
-
 from fastapi import APIRouter, Request
 
 router = APIRouter(tags=["host"])

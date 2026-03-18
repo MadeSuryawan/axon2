@@ -1,7 +1,5 @@
 """Language detection based on file extensions."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 SUPPORTED_EXTENSIONS: dict[str, str] = {

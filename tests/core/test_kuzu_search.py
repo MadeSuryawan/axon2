@@ -1,7 +1,5 @@
 """Tests for KuzuDB FTS search, embedding storage, and vector search."""
 
-from __future__ import annotations
-
 from collections.abc import Generator
 from pathlib import Path
 

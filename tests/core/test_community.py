@@ -1,7 +1,5 @@
 """Tests for the community detection phase (Phase 8)."""
 
-from __future__ import annotations
-
 import pytest
 
 from axon.core.graph.graph import KnowledgeGraph

@@ -1,7 +1,5 @@
 """Tests for the in-memory KnowledgeGraph."""
 
-from __future__ import annotations
-
 import pytest
 
 from axon.core.graph.graph import KnowledgeGraph

@@ -1,15 +1,13 @@
 """Graph API routes — full graph, node detail, overview stats."""
 
-from __future__ import annotations
-
-import logging
+from logging import getLogger
 
 from fastapi import APIRouter, HTTPException, Request
 
 from axon.config.constants import SYSTEM_EXCEPTIONS
 from axon.core.graph.model import GraphNode, GraphRelationship
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 router = APIRouter(tags=["graph"])
 

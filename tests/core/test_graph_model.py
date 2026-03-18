@@ -1,7 +1,5 @@
 """Tests for the knowledge graph data model."""
 
-from __future__ import annotations
-
 import pytest
 
 from axon.core.graph.model import (

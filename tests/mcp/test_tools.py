@@ -6,8 +6,6 @@ Each tool handler is tested for both success and edge-case paths.
 Tests use the Tools class directly.
 """
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 from unittest.mock import MagicMock

@@ -1,8 +1,6 @@
 """Search API route — hybrid search across the knowledge graph."""
 
-from __future__ import annotations
-
-import logging
+from logging import getLogger
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -10,7 +8,7 @@ from pydantic import BaseModel, Field
 from axon.core.embeddings.embedder import embed_query
 from axon.core.search.hybrid import SearchDeps, hybrid_search
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 router = APIRouter(tags=["search"])
 

@@ -1,7 +1,5 @@
 """Tests for axon.config.ignore and axon.config.languages."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from axon.config.ignore import (
@@ -82,11 +80,7 @@ class TestLoadGitignore:
     def test_reads_gitignore(self, tmp_path: Path) -> None:
         gitignore = tmp_path / ".gitignore"
         gitignore.write_text(
-            "# comment\n"
-            "*.log\n"
-            "\n"
-            "  tmp/  \n"
-            "dist/\n",
+            "# comment\n*.log\n\n  tmp/  \ndist/\n",
             encoding="utf-8",
         )
         patterns = load_gitignore(tmp_path)

@@ -1,7 +1,5 @@
 """Tests for the type analysis phase (Phase 7)."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 import pytest

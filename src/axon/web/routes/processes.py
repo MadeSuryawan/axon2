@@ -1,12 +1,10 @@
 """Process routes — list discovered execution processes with their steps."""
 
-from __future__ import annotations
-
-import logging
+from logging import getLogger
 
 from fastapi import APIRouter, HTTPException, Request
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 router = APIRouter(tags=["processes"])
 

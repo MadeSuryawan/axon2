@@ -6,8 +6,6 @@ runs the full pipeline, and verifies that every layer — from parsing through
 storage to MCP tool queries — produces correct results.
 """
 
-from __future__ import annotations
-
 from collections.abc import Generator
 from pathlib import Path
 

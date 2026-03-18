@@ -1,7 +1,5 @@
 """Tests for the TypeScript / TSX / JavaScript parser."""
 
-from __future__ import annotations
-
 import pytest
 
 from axon.core.parsers.typescript import TypeScriptParser

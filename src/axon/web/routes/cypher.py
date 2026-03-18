@@ -1,17 +1,15 @@
 """Cypher query execution route — read-only raw Cypher against the graph."""
 
-from __future__ import annotations
-
-import logging
 import re
 import time
+from logging import getLogger
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from axon.core.cypher_guard import WRITE_KEYWORDS, sanitize_cypher
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 router = APIRouter(tags=["cypher"])
 
@@ -29,7 +27,11 @@ def _extract_return_columns(query: str) -> list[str]:
     Handles aliases (``AS name``), dotted properties (``n.name``), and
     function calls (``count(n)``).
     """
-    match = re.search(r"\bRETURN\b\s+(.*?)(?:\bORDER\b|\bLIMIT\b|\bSKIP\b|$)", query, re.IGNORECASE | re.DOTALL)
+    match = re.search(
+        r"\bRETURN\b\s+(.*?)(?:\bORDER\b|\bLIMIT\b|\bSKIP\b|$)",
+        query,
+        re.IGNORECASE | re.DOTALL,
+    )
     if not match:
         return []
 

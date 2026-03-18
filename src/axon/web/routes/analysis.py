@@ -1,12 +1,10 @@
 """Analysis API routes — impact, dead code, coupling, communities, health, reindex."""
 
-from __future__ import annotations
-
 import asyncio
-import logging
 import threading
 from collections import defaultdict
 from contextlib import suppress
+from logging import getLogger
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -15,7 +13,7 @@ from axon.core.ingestion.pipeline import Pipelines
 from axon.mcp.resources import get_dead_code_symbols
 from axon.web.routes.graph import _serialize_node
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 router = APIRouter(tags=["analysis"])
 

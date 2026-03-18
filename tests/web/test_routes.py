@@ -1,5 +1,5 @@
-from __future__ import annotations
-
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -14,28 +14,31 @@ from axon.core.graph.model import (
     NodeLabel,
     RelType,
 )
+from axon.core.storage.base import SearchResult
+from axon.web.routes.analysis import router as analysis_router
+from axon.web.routes.cypher import router as cypher_router
+from axon.web.routes.diff import router as diff_router
+from axon.web.routes.events import router as events_router
+from axon.web.routes.files import router as files_router
+from axon.web.routes.graph import router as graph_router
+from axon.web.routes.host import router as host_router
+from axon.web.routes.processes import router as processes_router
+from axon.web.routes.search import router as search_router
 
 
 def _make_app(
     storage: MagicMock,
     repo_path: Path | None = None,
+    *,
     watch: bool = False,
 ) -> FastAPI:
-    """Build a FastAPI app with a mocked storage backend.
+    """
+    Build a FastAPI app with a mocked storage backend.
 
     Instead of calling ``create_app`` (which needs a real KuzuDB path),
     this replicates the app assembly from ``app.py`` but injects a mock
     storage directly.
     """
-    from axon.web.routes.analysis import router as analysis_router
-    from axon.web.routes.cypher import router as cypher_router
-    from axon.web.routes.diff import router as diff_router
-    from axon.web.routes.events import router as events_router
-    from axon.web.routes.files import router as files_router
-    from axon.web.routes.graph import router as graph_router
-    from axon.web.routes.host import router as host_router
-    from axon.web.routes.processes import router as processes_router
-    from axon.web.routes.search import router as search_router
 
     app = FastAPI()
     app.state.storage = storage
@@ -140,9 +143,7 @@ class TestGraphEndpoint:
         assert data["nodes"] == []
         assert data["edges"] == []
 
-    def test_graph_with_nodes_and_edges(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_graph_with_nodes_and_edges(self, mock_storage: MagicMock, client: TestClient) -> None:
         node = _sample_node()
         edge = _sample_edge(confidence=0.9)
         graph = KnowledgeGraph()
@@ -152,7 +153,7 @@ class TestGraphEndpoint:
                 node_id="function:src/utils.py:helper",
                 name="helper",
                 file_path="src/utils.py",
-            )
+            ),
         )
         graph.add_relationship(edge)
         mock_storage.load_graph.return_value = graph
@@ -184,9 +185,7 @@ class TestGraphEndpoint:
         assert "target" in e
         assert "confidence" in e
 
-    def test_graph_load_failure(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_graph_load_failure(self, mock_storage: MagicMock, client: TestClient) -> None:
         mock_storage.load_graph.side_effect = RuntimeError("DB error")
         response = client.get("/graph")
         assert response.status_code == 500
@@ -204,9 +203,7 @@ class TestOverviewEndpoint:
         assert data["totalNodes"] == 0
         assert data["totalEdges"] == 0
 
-    def test_overview_with_data(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_overview_with_data(self, mock_storage: MagicMock, client: TestClient) -> None:
         # First call: node counts, second call: edge counts
         mock_storage.execute_raw.side_effect = [
             [["Function", 42], ["Class", 10]],
@@ -237,9 +234,7 @@ class TestNodeEndpoint:
         response = client.get("/node/nonexistent:id")
         assert response.status_code == 404
 
-    def test_node_with_context(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_node_with_context(self, mock_storage: MagicMock, client: TestClient) -> None:
         target_node = _sample_node()
         caller_node = _sample_node(
             node_id="function:src/cli.py:run",
@@ -259,12 +254,8 @@ class TestNodeEndpoint:
         )
 
         mock_storage.get_node.return_value = target_node
-        mock_storage.get_callers_with_confidence.return_value = [
-            (caller_node, 1.0)
-        ]
-        mock_storage.get_callees_with_confidence.return_value = [
-            (callee_node, 0.8)
-        ]
+        mock_storage.get_callers_with_confidence.return_value = [(caller_node, 1.0)]
+        mock_storage.get_callees_with_confidence.return_value = [(callee_node, 0.8)]
         mock_storage.get_type_refs.return_value = [type_ref_node]
         mock_storage.get_process_memberships.return_value = {}
 
@@ -286,10 +277,7 @@ class TestNodeEndpoint:
 
 
 class TestSearchEndpoint:
-    def test_search_returns_results(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
-        from axon.core.storage.base import SearchResult
+    def test_search_returns_results(self, mock_storage: MagicMock, client: TestClient) -> None:
 
         search_results = [
             SearchResult(
@@ -302,11 +290,11 @@ class TestSearchEndpoint:
             ),
         ]
 
-        with patch("axon.web.routes.search.hybrid_search", return_value=search_results):
-            with patch("axon.web.routes.search.embed_query", return_value=None):
-                response = client.post(
-                    "/search", json={"query": "validate", "limit": 10}
-                )
+        with (
+            patch("axon.web.routes.search.hybrid_search", return_value=search_results),
+            patch("axon.web.routes.search.embed_query", return_value=None),
+        ):
+            response = client.post("/search", json={"query": "validate", "limit": 10})
 
         assert response.status_code == 200
         data = response.json()
@@ -321,30 +309,26 @@ class TestSearchEndpoint:
         assert r["label"] == "function"
         assert r["snippet"] == "def validate(user): ..."
 
-    def test_search_empty_results(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
-        with patch("axon.web.routes.search.hybrid_search", return_value=[]):
-            with patch("axon.web.routes.search.embed_query", return_value=None):
-                response = client.post(
-                    "/search", json={"query": "nonexistent", "limit": 5}
-                )
+    def test_search_empty_results(self, mock_storage: MagicMock, client: TestClient) -> None:
+        with (
+            patch("axon.web.routes.search.hybrid_search", return_value=[]),
+            patch("axon.web.routes.search.embed_query", return_value=None),
+        ):
+            response = client.post("/search", json={"query": "nonexistent", "limit": 5})
 
         assert response.status_code == 200
         data = response.json()
         assert data["results"] == []
 
-    def test_search_failure(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
-        with patch(
-            "axon.web.routes.search.hybrid_search",
-            side_effect=RuntimeError("search error"),
+    def test_search_failure(self, mock_storage: MagicMock, client: TestClient) -> None:
+        with (
+            patch(
+                "axon.web.routes.search.hybrid_search",
+                side_effect=RuntimeError("search error"),
+            ),
+            patch("axon.web.routes.search.embed_query", return_value=None),
         ):
-            with patch("axon.web.routes.search.embed_query", return_value=None):
-                response = client.post(
-                    "/search", json={"query": "test"}
-                )
+            response = client.post("/search", json={"query": "test"})
 
         assert response.status_code == 500
 
@@ -357,9 +341,7 @@ class TestDeadCodeEndpoint:
         assert data["total"] == 0
         assert data["byFile"] == {}
 
-    def test_dead_code_found(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_dead_code_found(self, mock_storage: MagicMock, client: TestClient) -> None:
         mock_storage.execute_raw.return_value = [
             ["id1", "unused_func", "src/old.py", 10, "Function"],
             ["id2", "stale_helper", "src/old.py", 25, "Function"],
@@ -374,9 +356,7 @@ class TestDeadCodeEndpoint:
         assert len(data["byFile"]["src/old.py"]) == 2
         assert "src/models.py" in data["byFile"]
 
-    def test_dead_code_query_failure(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_dead_code_query_failure(self, mock_storage: MagicMock, client: TestClient) -> None:
         mock_storage.execute_raw.side_effect = RuntimeError("DB error")
         response = client.get("/dead-code")
         assert response.status_code == 500
@@ -390,9 +370,7 @@ class TestCouplingEndpoint:
         assert "pairs" in data
         assert data["pairs"] == []
 
-    def test_coupling_with_data(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_coupling_with_data(self, mock_storage: MagicMock, client: TestClient) -> None:
         mock_storage.execute_raw.return_value = [
             ["FileA", "src/a.py", "FileB", "src/b.py", 0.85, 12],
         ]
@@ -410,7 +388,9 @@ class TestCouplingEndpoint:
 
 class TestHealthEndpoint:
     def test_health_returns_score_and_breakdown(
-        self, mock_storage: MagicMock, client: TestClient
+        self,
+        mock_storage: MagicMock,
+        client: TestClient,
     ) -> None:
         # The health endpoint makes exactly 5 execute_raw calls:
         # 1. Dead code UNION ALL (3 rows: Function, Method, Class)
@@ -420,10 +400,10 @@ class TestHealthEndpoint:
         # 5. Coverage UNION ALL (2 rows: Function, Method)
         mock_storage.execute_raw.side_effect = [
             [[100, 5], [50, 0], [20, 0]],  # dead code: Function/Method/Class [count, dead]
-            [[0.5], [0.3]],                  # coupling strengths
-            [[3]],                           # community count
-            [[0.9]],                         # avg confidence
-            [[50, 10], [30, 5]],            # coverage: Function/Method [callable, in_process]
+            [[0.5], [0.3]],  # coupling strengths
+            [[3]],  # community count
+            [[0.9]],  # avg confidence
+            [[50, 10], [30, 5]],  # coverage: Function/Method [callable, in_process]
         ]
 
         response = client.get("/health")
@@ -456,9 +436,7 @@ class TestCommunitiesEndpoint:
         assert "communities" in data
         assert data["communities"] == []
 
-    def test_communities_with_data(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_communities_with_data(self, mock_storage: MagicMock, client: TestClient) -> None:
         mock_storage.execute_raw.return_value = [
             ["community:auth", "Auth Module", None, ["func:login", "func:register"]],
         ]
@@ -483,12 +461,9 @@ class TestProcessesEndpoint:
         assert "processes" in data
         assert data["processes"] == []
 
-    def test_processes_with_data(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_processes_with_data(self, mock_storage: MagicMock, client: TestClient) -> None:
         mock_storage.execute_raw.return_value = [
-            ["process:login-flow", "Login Flow",
-             ["func:validate", "func:auth"], [1, 2]],
+            ["process:login-flow", "Login Flow", ["func:validate", "func:auth"], [1, 2]],
         ]
 
         response = client.get("/processes")
@@ -505,9 +480,7 @@ class TestProcessesEndpoint:
 
 
 class TestCypherEndpoint:
-    def test_valid_query(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_valid_query(self, mock_storage: MagicMock, client: TestClient) -> None:
         mock_storage.execute_raw.return_value = [
             ["main", "src/app.py", 1],
             ["helper", "src/utils.py", 5],
@@ -527,9 +500,7 @@ class TestCypherEndpoint:
         assert len(data["rows"]) == 2
         assert isinstance(data["durationMs"], (int, float))
 
-    def test_empty_results(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_empty_results(self, mock_storage: MagicMock, client: TestClient) -> None:
         mock_storage.execute_raw.return_value = []
 
         response = client.post(
@@ -541,9 +512,7 @@ class TestCypherEndpoint:
         assert data["rowCount"] == 0
         assert data["rows"] == []
 
-    def test_null_results(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_null_results(self, mock_storage: MagicMock, client: TestClient) -> None:
         mock_storage.execute_raw.return_value = None
 
         response = client.post(
@@ -597,9 +566,7 @@ class TestCypherEndpoint:
         )
         assert response.status_code == 400
 
-    def test_write_query_blocked_case_insensitive(
-        self, client: TestClient
-    ) -> None:
+    def test_write_query_blocked_case_insensitive(self, client: TestClient) -> None:
         response = client.post(
             "/cypher",
             json={"query": "match (n) delete n"},
@@ -632,9 +599,7 @@ class TestCypherEndpoint:
         response = client.post("/cypher", json={"query": "COPY Node FROM 'file.csv'"})
         assert response.status_code == 400
 
-    def test_query_execution_failure(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_query_execution_failure(self, mock_storage: MagicMock, client: TestClient) -> None:
         mock_storage.execute_raw.side_effect = RuntimeError("Syntax error in query")
         response = client.post(
             "/cypher",
@@ -644,7 +609,9 @@ class TestCypherEndpoint:
         assert "Syntax error" in response.json()["detail"]
 
     def test_columns_extracted_from_return(
-        self, mock_storage: MagicMock, client: TestClient
+        self,
+        mock_storage: MagicMock,
+        client: TestClient,
     ) -> None:
         mock_storage.execute_raw.return_value = [["test", 42]]
 
@@ -665,9 +632,7 @@ class TestTreeEndpoint:
         assert "tree" in data
         assert data["tree"] == []
 
-    def test_tree_with_files(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_tree_with_files(self, mock_storage: MagicMock, client: TestClient) -> None:
         mock_storage.execute_raw.side_effect = [
             # File nodes
             [
@@ -686,9 +651,7 @@ class TestTreeEndpoint:
         assert len(data["tree"]) >= 1
 
         # Should have a "src" folder at root
-        src_folder = next(
-            (item for item in data["tree"] if item["name"] == "src"), None
-        )
+        src_folder = next((item for item in data["tree"] if item["name"] == "src"), None)
         assert src_folder is not None
         assert src_folder["type"] == "folder"
         assert "children" in src_folder
@@ -700,15 +663,11 @@ class TestFileEndpoint:
         assert response.status_code == 400
         assert "repo_path" in response.json()["detail"].lower()
 
-    def test_file_not_found(
-        self, client_with_repo: TestClient
-    ) -> None:
+    def test_file_not_found(self, client_with_repo: TestClient) -> None:
         response = client_with_repo.get("/file?path=nonexistent.py")
         assert response.status_code == 404
 
-    def test_file_found(
-        self, mock_storage: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_file_found(self, mock_storage: MagicMock, tmp_path: Path) -> None:
         # Create a real file in the tmp repo
         src_dir = tmp_path / "src"
         src_dir.mkdir()
@@ -725,9 +684,7 @@ class TestFileEndpoint:
         assert "def main()" in data["content"]
         assert data["language"] == "python"
 
-    def test_path_traversal_blocked(
-        self, mock_storage: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_path_traversal_blocked(self, mock_storage: MagicMock, tmp_path: Path) -> None:
         app = _make_app(mock_storage, repo_path=tmp_path)
         client = TestClient(app)
 
@@ -742,12 +699,7 @@ class TestDiffEndpoint:
         assert response.status_code == 400
         assert "repo_path" in response.json()["detail"].lower()
 
-    def test_diff_success(
-        self, mock_storage: MagicMock, tmp_path: Path
-    ) -> None:
-        from dataclasses import dataclass
-        from dataclasses import field as dc_field
-
+    def test_diff_success(self, mock_storage: MagicMock, tmp_path: Path) -> None:
         @dataclass
         class FakeDiffResult:
             added_nodes: list = dc_field(default_factory=list)
@@ -767,9 +719,7 @@ class TestDiffEndpoint:
         client = TestClient(app)
 
         with patch("axon.web.routes.diff.diff_branches", return_value=fake_result):
-            response = client.post(
-                "/diff", json={"base": "main", "compare": "feature"}
-            )
+            response = client.post("/diff", json={"base": "main", "compare": "feature"})
 
         assert response.status_code == 200
         data = response.json()
@@ -781,11 +731,7 @@ class TestDiffEndpoint:
         assert len(data["added"]) == 1
         assert data["added"][0]["name"] == "new_func"
 
-    def test_diff_with_modified_nodes(
-        self, mock_storage: MagicMock, tmp_path: Path
-    ) -> None:
-        from dataclasses import dataclass
-        from dataclasses import field as dc_field
+    def test_diff_with_modified_nodes(self, mock_storage: MagicMock, tmp_path: Path) -> None:
 
         base_node = _sample_node(
             node_id="function:src/utils.py:helper",
@@ -813,9 +759,7 @@ class TestDiffEndpoint:
         client = TestClient(app)
 
         with patch("axon.web.routes.diff.diff_branches", return_value=fake_result):
-            response = client.post(
-                "/diff", json={"base": "main", "compare": "dev"}
-            )
+            response = client.post("/diff", json={"base": "main", "compare": "dev"})
 
         assert response.status_code == 200
         data = response.json()
@@ -823,9 +767,7 @@ class TestDiffEndpoint:
         assert "before" in data["modified"][0]
         assert "after" in data["modified"][0]
 
-    def test_diff_value_error(
-        self, mock_storage: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_diff_value_error(self, mock_storage: MagicMock, tmp_path: Path) -> None:
         app = _make_app(mock_storage, repo_path=tmp_path)
         client = TestClient(app)
 
@@ -833,9 +775,7 @@ class TestDiffEndpoint:
             "axon.web.routes.diff.diff_branches",
             side_effect=ValueError("Invalid branch range"),
         ):
-            response = client.post(
-                "/diff", json={"base": "main", "compare": "nonexistent"}
-            )
+            response = client.post("/diff", json={"base": "main", "compare": "nonexistent"})
 
         assert response.status_code == 400
 
@@ -845,9 +785,7 @@ class TestReindexEndpoint:
         response = client.post("/reindex")
         assert response.status_code == 400
 
-    def test_reindex_not_in_watch_mode(
-        self, mock_storage: MagicMock
-    ) -> None:
+    def test_reindex_not_in_watch_mode(self, mock_storage: MagicMock) -> None:
         app = _make_app(mock_storage, repo_path=Path("/tmp/fake"), watch=False)
         client = TestClient(app)
         response = client.post("/reindex")
@@ -868,9 +806,7 @@ class TestImpactEndpoint:
         response = client.get("/impact/nonexistent:id")
         assert response.status_code == 404
 
-    def test_impact_with_affected(
-        self, mock_storage: MagicMock, client: TestClient
-    ) -> None:
+    def test_impact_with_affected(self, mock_storage: MagicMock, client: TestClient) -> None:
         target = _sample_node()
         affected = _sample_node(
             node_id="function:src/cli.py:run",

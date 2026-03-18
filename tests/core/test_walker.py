@@ -1,7 +1,5 @@
 """Tests for axon.core.ingestion.walker."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -115,9 +113,7 @@ class TestWalkRepoRelativePaths:
     def test_walk_repo_relative_paths(self, tmp_repo: Path) -> None:
         entries = walk_repo(tmp_repo)
         for entry in entries:
-            assert not Path(entry.path).is_absolute(), (
-                f"Expected relative path, got: {entry.path}"
-            )
+            assert not Path(entry.path).is_absolute(), f"Expected relative path, got: {entry.path}"
 
 
 class TestWalkRepoReadsContent:
@@ -183,7 +179,7 @@ class TestWalkRepoGitignore:
         # Create a .log file that should be ignored by .gitignore pattern
         (tmp_repo / "debug.log").write_text("log data", encoding="utf-8")
         # Also create a .py file named with log to make sure it's NOT ignored
-        (tmp_repo / "logger.py").write_text("import logging", encoding="utf-8")
+        (tmp_repo / "logger.py").write_text("from logging import getLogger", encoding="utf-8")
 
         gitignore_patterns = ["*.log"]
         entries = walk_repo(tmp_repo, gitignore_patterns=gitignore_patterns)

@@ -1,7 +1,5 @@
 """Tests for the heritage extraction phase (Phase 6)."""
 
-from __future__ import annotations
-
 import pytest
 
 from axon.core.graph.graph import KnowledgeGraph

@@ -1,15 +1,13 @@
 """File tree and content routes."""
 
-from __future__ import annotations
-
-import logging
+from logging import getLogger
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from axon.config.constants import SYSTEM_EXCEPTIONS
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 router = APIRouter(tags=["files"])
 

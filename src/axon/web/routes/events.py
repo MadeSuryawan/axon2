@@ -1,17 +1,15 @@
 """SSE event streaming route for live updates."""
 
-from __future__ import annotations
-
 import asyncio
 import json
-import logging
 import threading
 from collections.abc import AsyncIterator
+from logging import getLogger
 
 from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 router = APIRouter(tags=["events"])
 

@@ -6,8 +6,6 @@ implementations (KuzuDB, Neo4j, in-memory, etc.) must satisfy, along with
 supporting data classes for search results and embeddings.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
