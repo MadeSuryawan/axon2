@@ -1,15 +1,17 @@
 """Analysis API routes — impact, dead code, coupling, communities, health, reindex."""
 
-import asyncio
-import threading
+from asyncio import get_running_loop
 from collections import defaultdict
 from contextlib import suppress
 from logging import getLogger
+from threading import Lock, Thread
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from axon.config.constants import SYSTEM_EXCEPTIONS
 from axon.core.ingestion.pipeline import Pipelines
+from axon.core.storage.base import StorageBackend
 from axon.mcp.resources import get_dead_code_symbols
 from axon.web.routes.graph import _serialize_node
 
@@ -18,11 +20,15 @@ logger = getLogger(__name__)
 router = APIRouter(tags=["analysis"])
 
 # Guards against concurrent reindex runs launched via POST /reindex.
-_reindex_lock = threading.Lock()
+_reindex_lock = Lock()
 
 
 @router.get("/impact/{node_id:path}")
-def get_impact(node_id: str, request: Request, depth: int = Query(default=3, ge=1, le=5)) -> dict:
+def get_impact(
+    node_id: str,
+    request: Request,
+    depth: int = Query(default=3, ge=1, le=5),
+) -> dict[str, Any]:
     """Analyse the blast radius of a node by traversing callers up to *depth* hops."""
     storage = request.app.state.storage
 
@@ -44,7 +50,7 @@ def get_impact(node_id: str, request: Request, depth: int = Query(default=3, ge=
 
 
 @router.get("/dead-code")
-def get_dead_code(request: Request) -> dict:
+def get_dead_code(request: Request) -> dict[str, Any]:
     """List all symbols flagged as dead code, grouped by file."""
     storage = request.app.state.storage
 
@@ -72,7 +78,7 @@ def get_dead_code(request: Request) -> dict:
 
 
 @router.get("/coupling")
-def get_coupling(request: Request) -> dict:
+def get_coupling(request: Request) -> dict[str, Any]:
     """Return temporal coupling pairs between files."""
     storage = request.app.state.storage
 
@@ -101,7 +107,7 @@ def get_coupling(request: Request) -> dict:
 
 
 @router.get("/communities")
-def get_communities(request: Request) -> dict:
+def get_communities(request: Request) -> dict[str, Any]:
     """Return community clusters with their member nodes."""
     storage = request.app.state.storage
 
@@ -148,14 +154,8 @@ def get_communities(request: Request) -> dict:
     return {"communities": communities}
 
 
-@router.get("/health")
-def get_health(request: Request) -> dict:
-    """Compute a composite codebase health score from multiple dimensions."""
-    storage = request.app.state.storage
-
-    breakdown: dict[str, float] = {}
-
-    # Dead code score (25%): 100 - (dead / total * 100)
+def _compute_dead_code_score(storage: StorageBackend) -> float:
+    """Compute dead code score (25%): 100 - (dead / total * 100)."""
     try:
         dc_rows = storage.execute_raw(
             "MATCH (n:Function) WHERE n.start_line > 0 "
@@ -167,15 +167,17 @@ def get_health(request: Request) -> dict:
         )
         total_symbols = int(sum(r[0] for r in dc_rows if r and r[0]) or 1)
         dead_count = int(sum(r[1] for r in dc_rows if r and r[1]) or 0)
-        breakdown["deadCode"] = round(
+        return round(
             max(0.0, 100.0 - (dead_count / max(total_symbols, 1) * 100)),
             1,
         )
     except SYSTEM_EXCEPTIONS:
         logger.warning("Health: dead code query failed", exc_info=True)
-        breakdown["deadCode"] = 100.0
+        return 100.0
 
-    # Coupling score (20%): 100 - (high_coupling / total_coupling * 200)
+
+def _compute_coupling_score(storage: StorageBackend) -> float:
+    """Compute coupling score (20%): 100 - (high_coupling / total_coupling * 200)."""
     try:
         coupling_rows = storage.execute_raw(
             "MATCH ()-[r:CodeRelation]->() WHERE r.rel_type = 'coupled_with' RETURN r.strength",
@@ -183,32 +185,34 @@ def get_health(request: Request) -> dict:
         if coupling_rows:
             total_coupling = len(coupling_rows)
             high_coupling = sum(1 for row in coupling_rows if row[0] and row[0] > 0.7)
-            breakdown["coupling"] = round(
+            return round(
                 max(0.0, 100.0 - (high_coupling / max(total_coupling, 1) * 200)),
                 1,
             )
-        else:
-            breakdown["coupling"] = 100.0
+        return 100.0
     except SYSTEM_EXCEPTIONS:
         logger.warning("Health: coupling query failed", exc_info=True)
-        breakdown["coupling"] = 100.0
+        return 100.0
 
-    # Modularity score (20%): community count as proxy
+
+def _compute_modularity_score(storage: StorageBackend) -> float:
+    """Compute modularity score (20%): community count as proxy."""
     try:
         comm_rows = storage.execute_raw("MATCH (c:Community) RETURN count(c)")
         comm_count = comm_rows[0][0] if comm_rows and comm_rows[0] else 0
         # Heuristic: 3-15 communities is ideal; fewer or too many is worse
         if comm_count == 0:
-            breakdown["modularity"] = 20.0
+            return 20.0
         elif comm_count <= 15:
-            breakdown["modularity"] = min(100.0, round(comm_count / 15.0 * 100, 1))
-        else:
-            breakdown["modularity"] = round(max(50.0, 100.0 - (comm_count - 15) * 2), 1)
+            return min(100.0, round(comm_count / 15.0 * 100, 1))
+        return round(max(50.0, 100.0 - (comm_count - 15) * 2), 1)
     except SYSTEM_EXCEPTIONS:
         logger.warning("Health: modularity query failed", exc_info=True)
-        breakdown["modularity"] = 50.0
+        return 50.0
 
-    # Confidence score (20%): avg(confidence) * 100 across CALLS edges
+
+def _compute_confidence_score(storage: StorageBackend) -> float:
+    """Compute confidence score (20%): avg(confidence) * 100 across CALLS edges."""
     try:
         conf_rows = storage.execute_raw(
             "MATCH ()-[r:CodeRelation]->() WHERE r.rel_type = 'calls' RETURN avg(r.confidence)",
@@ -216,12 +220,14 @@ def get_health(request: Request) -> dict:
         avg_conf = (
             conf_rows[0][0] if conf_rows and conf_rows[0] and conf_rows[0][0] is not None else 0.8
         )
-        breakdown["confidence"] = round(min(100.0, avg_conf * 100), 1)
+        return round(min(100.0, avg_conf * 100), 1)
     except SYSTEM_EXCEPTIONS:
         logger.warning("Health: confidence query failed", exc_info=True)
-        breakdown["confidence"] = 80.0
+        return 80.0
 
-    # Coverage score (15%): symbols_in_processes / callable_symbols * 100
+
+def _compute_coverage_score(storage: StorageBackend) -> float:
+    """Compute coverage score (15%): symbols_in_processes / callable_symbols * 100."""
     try:
         cov_rows = storage.execute_raw(
             "MATCH (n:Function) "
@@ -233,10 +239,24 @@ def get_health(request: Request) -> dict:
         )
         callable_count = sum(r[0] for r in cov_rows if r and r[0]) or 1
         in_process = sum(r[1] for r in cov_rows if r and r[1]) or 0
-        breakdown["coverage"] = round(min(100.0, in_process / max(callable_count, 1) * 100), 1)
+        return round(min(100.0, in_process / max(callable_count, 1) * 100), 1)
     except SYSTEM_EXCEPTIONS:
         logger.warning("Health: coverage query failed", exc_info=True)
-        breakdown["coverage"] = 0.0
+        return 0.0
+
+
+@router.get("/health")
+def get_health(request: Request) -> dict:
+    """Compute a composite codebase health score from multiple dimensions."""
+    storage = request.app.state.storage
+
+    breakdown: dict[str, float] = {
+        "deadCode": _compute_dead_code_score(storage),
+        "coupling": _compute_coupling_score(storage),
+        "modularity": _compute_modularity_score(storage),
+        "confidence": _compute_confidence_score(storage),
+        "coverage": _compute_coverage_score(storage),
+    }
 
     weights = {
         "deadCode": 0.25,
@@ -265,7 +285,7 @@ async def trigger_reindex(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="Reindex only available in watch mode")
 
     event_listeners = request.app.state.event_listeners
-    loop = asyncio.get_running_loop()
+    loop = get_running_loop()
 
     def _broadcast(event: dict) -> None:
         """Put an event into every connected client's queue (thread-safe)."""
@@ -292,7 +312,7 @@ async def trigger_reindex(request: Request) -> dict:
             _reindex_lock.release()
             _broadcast({"type": "reindex_complete" if success else "reindex_failed", "data": {}})
 
-    thread = threading.Thread(target=_run_reindex, daemon=True)
+    thread = Thread(target=_run_reindex, daemon=True)
     thread.start()
 
     return {"status": "started"}
