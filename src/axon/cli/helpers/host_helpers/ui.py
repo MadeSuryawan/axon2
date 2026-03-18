@@ -31,7 +31,7 @@ from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.core.storage.kuzu_backend import KuzuBackend
 from axon.mcp.server import set_lock, set_storage
 from axon.runtime import AxonRuntime
-from axon.web.app import create_app, create_ui_proxy_app
+from axon.web.app import AppDeps, create_app, create_ui_proxy_app
 
 logger = getLogger(__name__)
 
@@ -99,17 +99,18 @@ class UIRunner:
         config: "WebAppConfig",
     ) -> FastAPI:
         """Create and configure the web application for the host."""
-        return create_app(
+        deps = AppDeps(
             db_path=db_path,
             repo_path=repo_path,
-            watch=config.watch,
-            dev=config.dev,
             runtime=runtime,
-            mount_mcp=True,
             host_url=urls.host_url,
             mcp_url=urls.mcp_url,
+            mount_mcp=True,
+            watch=config.watch,
+            dev=config.dev,
             mount_frontend=config.expose_ui,
         )
+        return create_app(deps)
 
     @staticmethod
     def schedule_browser_open(host_url: str, *, open_browser: bool, no_open: bool) -> None:
@@ -218,12 +219,13 @@ class UIRunner:
         dev: bool,
     ) -> FastAPI:
         """Create a standalone UI application (for direct mode)."""
-        return create_app(
+        deps = AppDeps(
             db_path=db_path,
             repo_path=repo_path,
             watch=watch,
             dev=dev,
         )
+        return create_app(deps)
 
     @staticmethod
     def print_standalone_ui_startup(
