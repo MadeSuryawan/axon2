@@ -22,14 +22,20 @@ def run_tests(test_files: list[str]) -> list[str]:
 
 
 def main() -> None:
+    _stuck_tests = [
+        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_store_and_retrieve_by_vector",
+        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_vector_search_ranking",
+        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_vector_search_limit",
+        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_store_embeddings_upsert",
+    ]
     tests_dir = Path.cwd().resolve() / "tests"
-    # a set of long running tests
+    # long running tests
     excluded = {
-        # "test_kuzu_backend.py",
-        "test_kuzu_search.py",
-        # "test_watcher.py",
-        # "test_pipeline.py",
-        # "test_full_pipeline.py",
+        # "test_kuzu_backend.py", # Done
+        # "test_kuzu_search.py",  # Done
+        # "test_watcher.py", # Done
+        # "test_pipeline.py", # Done
+        "test_full_pipeline.py",  # Done
     }
     test_files = [str(test) for test in tests_dir.rglob("test_*.py") if test.name in excluded]
 
