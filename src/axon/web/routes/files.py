@@ -2,10 +2,12 @@
 
 from logging import getLogger
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from axon.config.constants import SYSTEM_EXCEPTIONS
+from axon.core.storage.base import StorageBackend
 
 logger = getLogger(__name__)
 
@@ -48,22 +50,65 @@ _EXTENSION_LANGUAGE: dict[str, str] = {
 
 
 def _detect_language(file_path: str) -> str:
+    """Detect language from file extension."""
     suffix = Path(file_path).suffix.lower()
     return _EXTENSION_LANGUAGE.get(suffix, "")
 
 
-@router.get("/tree")
-def get_tree(request: Request) -> dict:
-    """Build a nested folder tree from File and Folder nodes in the graph."""
-    storage = request.app.state.storage
+def _ensure_path(parts: list[str], root_children: dict[str, dict]) -> dict[str, Any]:
+    """Walk the tree, creating folder nodes as needed, return the leaf parent."""
+    current = root_children
+    node = None
+    for i, part in enumerate(parts[:-1]):
+        if part not in current:
+            folder_path = "/".join(parts[: i + 1])
+            current[part] = {
+                "name": part,
+                "path": folder_path,
+                "type": "folder",
+                "language": None,
+                "symbolCount": 0,
+                "children": {},
+            }
+        node = current[part]
+        current = node["children"]
+    return current
 
+
+def _dict_to_list(children_dict: dict) -> list[dict]:
+    """Convert a dictionary tree to a sorted list format."""
+    result = []
+    for node in sorted(
+        children_dict.values(),
+        key=lambda n: (n["type"] != "folder", n["name"]),
+    ):
+        entry = {
+            "name": node["name"],
+            "path": node["path"],
+            "type": node["type"],
+            "language": node.get("language"),
+            "symbolCount": node.get("symbolCount", 0),
+        }
+        if node["children"]:
+            entry["children"] = _dict_to_list(node["children"])
+        elif node["type"] == "folder":
+            entry["children"] = []
+        result.append(entry)
+    return result
+
+
+def _query_file_nodes(storage: StorageBackend) -> list[list[Any]]:
+    """Query File nodes from the graph database."""
     try:
-        file_rows = storage.execute_raw(
+        return storage.execute_raw(
             "MATCH (n:File) RETURN n.id, n.name, n.file_path, n.language",
         )
     except SYSTEM_EXCEPTIONS:
-        file_rows = []
+        return []
 
+
+def _query_symbol_counts(storage: StorageBackend) -> dict[str, int]:
+    """Query symbol counts per file from the graph database."""
     symbol_counts: dict[str, int] = {}
     try:
         count_rows = storage.execute_raw(
@@ -74,27 +119,12 @@ def get_tree(request: Request) -> dict:
                 symbol_counts[row[0]] = row[1]
     except SYSTEM_EXCEPTIONS:
         logger.warning("Failed to query symbol counts", exc_info=True)
+    return symbol_counts
 
+
+def _build_tree_from_files(file_rows: list, symbol_counts: dict[str, int]) -> list[dict[str, Any]]:
+    """Build a nested folder tree from file rows and symbol counts."""
     root_children: dict[str, dict] = {}
-
-    def _ensure_path(parts: list[str]) -> dict:
-        """Walk the tree, creating folder nodes as needed, return the leaf parent."""
-        current = root_children
-        node = None
-        for i, part in enumerate(parts[:-1]):
-            if part not in current:
-                folder_path = "/".join(parts[: i + 1])
-                current[part] = {
-                    "name": part,
-                    "path": folder_path,
-                    "type": "folder",
-                    "language": None,
-                    "symbolCount": 0,
-                    "children": {},
-                }
-            node = current[part]
-            current = node["children"]
-        return current
 
     for row in file_rows or []:
         file_path = row[2] if len(row) > 2 else ""
@@ -105,7 +135,7 @@ def get_tree(request: Request) -> dict:
         language = row[3] if len(row) > 3 and row[3] else _detect_language(file_path)
         name = parts[-1] if parts else row[1]
 
-        parent = _ensure_path(parts) if len(parts) > 1 else root_children
+        parent = _ensure_path(parts, root_children) if len(parts) > 1 else root_children
 
         parent[name] = {
             "name": name,
@@ -116,27 +146,19 @@ def get_tree(request: Request) -> dict:
             "children": {},
         }
 
-    def _dict_to_list(children_dict: dict) -> list[dict]:
-        result = []
-        for node in sorted(
-            children_dict.values(),
-            key=lambda n: (n["type"] != "folder", n["name"]),
-        ):
-            entry = {
-                "name": node["name"],
-                "path": node["path"],
-                "type": node["type"],
-                "language": node.get("language"),
-                "symbolCount": node.get("symbolCount", 0),
-            }
-            if node["children"]:
-                entry["children"] = _dict_to_list(node["children"])
-            elif node["type"] == "folder":
-                entry["children"] = []
-            result.append(entry)
-        return result
+    return _dict_to_list(root_children)
 
-    return {"tree": _dict_to_list(root_children)}
+
+@router.get("/tree")
+def get_tree(request: Request) -> dict[str, list[dict[str, Any]]]:
+    """Build a nested folder tree from File and Folder nodes in the graph."""
+    storage = request.app.state.storage
+
+    file_rows = _query_file_nodes(storage)
+    symbol_counts = _query_symbol_counts(storage)
+    tree = _build_tree_from_files(file_rows, symbol_counts)
+
+    return {"tree": tree}
 
 
 @router.get("/file")
