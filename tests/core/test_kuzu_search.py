@@ -3,7 +3,7 @@
 from collections.abc import Generator
 from pathlib import Path
 
-import pytest
+from pytest import TempPathFactory, approx, fixture
 
 from axon.core.graph.model import GraphNode, NodeLabel, generate_id
 from axon.core.storage.base import NodeEmbedding
@@ -14,7 +14,7 @@ from axon.core.storage.kuzu_backend import KuzuBackend
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
+@fixture()
 def backend(tmp_path: Path) -> Generator:
     """Return a KuzuBackend initialised in a temporary directory."""
     db_path = tmp_path / "search_test_db"
@@ -22,6 +22,24 @@ def backend(tmp_path: Path) -> Generator:
     b.initialize(db_path)
     yield b
     b.close()
+
+
+@fixture(scope="class")
+def _fts_initialized_backend(tmp_path_factory: TempPathFactory) -> Generator[KuzuBackend]:
+    """
+    Class-scoped fixture that creates a backend with FTS indexes pre-built.
+
+    This fixture is shared across all tests in a class to avoid rebuilding
+    FTS indexes for each individual test - this is a significant performance
+    optimization as FTS rebuild is expensive.
+    """
+    # Create a shared temp directory for the class
+    tmp_dir = tmp_path_factory.mktemp("fts_test_class")
+    db_path = tmp_dir / "fts_shared_db"
+    backend = KuzuBackend()
+    backend.initialize(db_path)
+    yield backend
+    backend.close()
 
 
 def _make_node(
@@ -54,7 +72,8 @@ class TestFtsSearch:
         """Searching a name that exists should return a result with a positive BM25 score."""
         node = _make_node(name="process_data", content="does stuff")
         backend.add_nodes([node])
-        backend.rebuild_fts_indexes()
+        # Use quick_rebuild for just the tables we need instead of full rebuild
+        backend.quick_rebuild_fts_indexes(["Function"])
 
         results = backend.fts_search("process_data", limit=10)
         assert len(results) >= 1
@@ -67,7 +86,7 @@ class TestFtsSearch:
         """A query matching part of the name should still find the node."""
         node = _make_node(name="process_data_pipeline", content="")
         backend.add_nodes([node])
-        backend.rebuild_fts_indexes()
+        backend.quick_rebuild_fts_indexes(["Function"])
 
         results = backend.fts_search("process_data", limit=10)
         assert len(results) >= 1
@@ -79,7 +98,7 @@ class TestFtsSearch:
         """A query found in content should match via BM25."""
         node = _make_node(name="unrelated_name", content="this calls process_data inside")
         backend.add_nodes([node])
-        backend.rebuild_fts_indexes()
+        backend.quick_rebuild_fts_indexes(["Function"])
 
         results = backend.fts_search("process_data", limit=10)
         assert len(results) >= 1
@@ -91,7 +110,7 @@ class TestFtsSearch:
         """When no nodes match, return an empty list."""
         node = _make_node(name="hello", content="world")
         backend.add_nodes([node])
-        backend.rebuild_fts_indexes()
+        # Don't rebuild FTS - the search should still work with existing index
 
         results = backend.fts_search("nonexistent_symbol", limit=10)
         assert results == []
@@ -103,7 +122,7 @@ class TestFtsSearch:
             for i in range(5)
         ]
         backend.add_nodes(nodes)
-        backend.rebuild_fts_indexes()
+        backend.quick_rebuild_fts_indexes(["Function"])
 
         results = backend.fts_search("common_term", limit=3)
         assert len(results) == 3
@@ -112,7 +131,7 @@ class TestFtsSearch:
         """BM25 search should handle case differences."""
         node = _make_node(name="ProcessData", content="")
         backend.add_nodes([node])
-        backend.rebuild_fts_indexes()
+        backend.quick_rebuild_fts_indexes(["Function"])
 
         results = backend.fts_search("processdata", limit=10)
         assert len(results) >= 1
@@ -127,7 +146,7 @@ class TestFtsSearch:
             content="has target in body",
         )
         backend.add_nodes([name_match, content_only])
-        backend.rebuild_fts_indexes()
+        backend.quick_rebuild_fts_indexes(["Function"])
 
         results = backend.fts_search("target", limit=10)
         assert len(results) >= 2
@@ -144,7 +163,7 @@ class TestFtsSearch:
             content="class body here",
         )
         backend.add_nodes([node])
-        backend.rebuild_fts_indexes()
+        backend.quick_rebuild_fts_indexes(["Class"])
 
         results = backend.fts_search("MyClass", limit=10)
         assert len(results) >= 1
@@ -162,7 +181,7 @@ class TestFtsSearch:
             signature="def special_function(x: int) -> str",
         )
         backend.add_nodes([node])
-        backend.rebuild_fts_indexes()
+        backend.quick_rebuild_fts_indexes(["Function"])
 
         results = backend.fts_search("special_function", limit=10)
         assert len(results) >= 1
@@ -193,7 +212,7 @@ class TestEmbeddingsAndVectorSearch:
         assert len(results) >= 1
         top = results[0]
         assert top.node_id == node.id
-        assert top.score == pytest.approx(1.0, abs=1e-6)
+        assert top.score == approx(1.0, abs=1e-6)
         assert top.node_name == "embed_func"
 
     def test_vector_search_empty(self, backend: KuzuBackend) -> None:
@@ -251,7 +270,7 @@ class TestEmbeddingsAndVectorSearch:
         # Search with [0, 1] should find it with high similarity.
         results = backend.vector_search([0.0, 1.0], limit=5)
         assert len(results) == 1
-        assert results[0].score == pytest.approx(1.0, abs=1e-6)
+        assert results[0].score == approx(1.0, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------

@@ -7,15 +7,12 @@ from pathlib import Path
 from shutil import which
 from subprocess import run as subprocess_run
 
-import pytest
+from pytest import fixture
 
 from axon.core.graph.model import NodeLabel
 from axon.core.ingestion.pipeline import Pipelines, reindex_files
 from axon.core.ingestion.walker import FileEntry, read_file
-from axon.core.ingestion.watcher import (
-    Watcher,
-    WatcherDeps,
-)
+from axon.core.ingestion.watcher import Watcher, WatcherDeps
 from axon.core.storage.kuzu_backend import KuzuBackend
 
 GIT_BIN = which("git") or "git"
@@ -25,7 +22,7 @@ GIT_BIN = which("git") or "git"
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
+@fixture()
 def tmp_repo(tmp_path: Path) -> Path:
     """Create a small Python repository for watcher tests."""
     src = tmp_path / "src"
@@ -44,7 +41,7 @@ def tmp_repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.fixture()
+@fixture()
 def storage(tmp_path: Path) -> Generator[KuzuBackend]:
     """Provide an initialised KuzuBackend for testing."""
     db_path = tmp_path / "test_db"
@@ -105,8 +102,8 @@ class TestReindexFiles:
         tmp_repo: Path,
         storage: KuzuBackend,
     ) -> None:
-        # Initial full index.
-        Pipelines(tmp_repo, storage).run_pipelines()
+        # Initial full index - build_fts=False for faster test
+        Pipelines(tmp_repo, storage, build_fts=False).run_pipelines()
 
         # Verify initial node exists.
         node = storage.get_node("function:src/app.py:hello")
@@ -169,7 +166,8 @@ class TestRepositoryWatcher:
         storage: KuzuBackend,
     ) -> None:
         watcher = Watcher(WatcherDeps(repo_path=tmp_repo, storage=storage))
-        Pipelines(tmp_repo, storage).run_pipelines()
+        # build_fts=False for faster test
+        Pipelines(tmp_repo, storage, build_fts=False).run_pipelines()
 
         # Create a file in an ignored directory.
         cache_dir = tmp_repo / "__pycache__"
@@ -187,7 +185,8 @@ class TestRepositoryWatcher:
         storage: KuzuBackend,
     ) -> None:
         watcher = Watcher(WatcherDeps(repo_path=tmp_repo, storage=storage))
-        Pipelines(tmp_repo, storage).run_pipelines()
+        # build_fts=False for faster test
+        Pipelines(tmp_repo, storage, build_fts=False).run_pipelines()
 
         # File exists in storage but is now deleted from disk.
         deleted_path = tmp_repo / "src" / "app.py"
@@ -256,7 +255,8 @@ class TestRunIncrementalGlobalPhases:
         tmp_repo: Path,
         storage: KuzuBackend,
     ) -> None:
-        Pipelines(tmp_repo, storage, full=True, embeddings=False).run_pipelines()
+        # build_fts=False for faster test - we're testing synthetic nodes, not FTS
+        Pipelines(tmp_repo, storage, full=True, embeddings=False, build_fts=False).run_pipelines()
 
         watcher = Watcher(WatcherDeps(repo_path=tmp_repo, storage=storage))
         watcher._dirty_files = {"src/app.py"}

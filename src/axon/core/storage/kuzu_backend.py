@@ -869,12 +869,16 @@ class KuzuBackend:
             self._relationship_manager.insert_relationship(rel)
             pbar.update() if pbar else None
 
-    def bulk_load(self, graph: KnowledgeGraph) -> None:
+    def bulk_load(self, graph: KnowledgeGraph, *, build_fts: bool = True) -> None:
         """
         Replace the entire store with the contents of *graph*.
 
         Uses CSV-based COPY FROM for bulk loading nodes and relationships,
         falling back to individual inserts if COPY FROM fails.
+
+        Args:
+            graph: The KnowledgeGraph to load.
+            build_fts: If False, skip FTS index rebuilding (optimization for tests).
         """
         conn = self._ensure_initialized()
         self._nodes_count = graph.node_count
@@ -894,7 +898,8 @@ class KuzuBackend:
         if not self._bulk_loader.bulk_load_rels_csv(graph, pbar):
             self.add_relationships(list(graph.iter_relationships()), pbar=pbar)
 
-        self.rebuild_fts_indexes(pbar)
+        if build_fts:
+            self.rebuild_fts_indexes(pbar)
         pbar.set_description_str("Completed")
         pbar.close()
 
@@ -1424,6 +1429,35 @@ class KuzuBackend:
                     pbar.update() if pbar else None
                 except RuntimeError:
                     logger.debug(f"FTS index rebuild failed for {futures[future]}", exc_info=True)
+
+    def quick_rebuild_fts_indexes(
+        self,
+        tables: list[str] | None = None,
+        max_workers: int = 4,
+    ) -> None:
+        """
+        Rebuild FTS indexes for specific tables only (optimization for tests).
+
+        Args:
+            tables: List of table names to rebuild. If None, rebuilds all tables.
+            max_workers: Maximum number of parallel workers.
+        """
+        self._ensure_initialized()
+        tables_to_build = tables or _NODE_TABLE_NAMES
+        pbar = tqdm(desc="Rebuilding FTS indexes", total=len(tables_to_build))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._schema_manager.build_index_for_table, table): table
+                for table in tables_to_build
+            }
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                    pbar.update()
+                except RuntimeError:
+                    logger.debug(f"FTS index rebuild failed for {futures[future]}", exc_info=True)
+        pbar.close()
 
     def remove_nodes_by_file(self, file_path: str) -> int:
         """

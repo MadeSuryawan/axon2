@@ -99,6 +99,8 @@ class Pipelines:
             re-index.  Currently Phase 0 is a no-op regardless of this flag.
         embeddings: When ``True`` (default), generate and store vector embeddings after
             bulk-loading.
+        build_fts: When ``True`` (default), rebuild FTS indexes after bulk loading.
+            Set to ``False`` for faster test execution.
     """
 
     def __init__(
@@ -108,11 +110,13 @@ class Pipelines:
         *,
         full: bool = False,
         embeddings: bool = True,
+        build_fts: bool = True,
     ) -> None:
         self._repo_path = repo_path
         self._storage = storage
         self._full = full
         self._embeddings = embeddings
+        self._build_fts = build_fts
         self._gitignore: list[str] = []
         self._files: list[FileEntry] = []
         self._graph = KnowledgeGraph()
@@ -263,7 +267,7 @@ class Pipelines:
             return
 
         rprint("\n[b blue]4 Stages loading to storage...")
-        self._storage.bulk_load(self._graph)
+        self._storage.bulk_load(self._graph, build_fts=self._build_fts)
 
         if not self._embeddings:
             rprint("\n[b yellow]Embedding disabled — search will use FTS only")
@@ -395,6 +399,7 @@ def reindex_files(
     storage: StorageBackend,
     *,
     rebuild_fts: bool = True,
+    build_fts: bool = True,
 ) -> KnowledgeGraph:
     """
     Re-index specific files through phases 2-7 (file-local phases).
@@ -412,7 +417,9 @@ def reindex_files(
     storage:
         An already-initialised storage backend.
     rebuild_fts:
-        Wether to rebuild the FTS or not
+        Deprecated, use build_fts instead.
+    build_fts:
+        Whether to rebuild the FTS indexes. Set to False for faster test execution.
 
     Returns
     -------
@@ -432,7 +439,7 @@ def reindex_files(
     Calls(parse_data, graph, {}).process_calls()
     Heritage(graph, parse_data, {}).process_heritage()
     Types(parse_data, graph, {}).process_types()
-    _update_storage(graph, storage, changed_files, saved_edges, rebuild_fts=rebuild_fts)
+    _update_storage(graph, storage, changed_files, saved_edges, rebuild_fts=build_fts)
 
     return graph
 
@@ -462,7 +469,7 @@ def _update_storage(
     changed_files: set[str],
     saved_edges: list[GraphRelationship],
     *,
-    rebuild_fts: bool,
+    rebuild_fts: bool = True,
 ) -> None:
 
     incremental_nodes = [
@@ -492,5 +499,6 @@ def _update_storage(
     if saved_edges:
         storage.add_relationships(saved_edges)
 
+    # Use rebuild_fts parameter (kept for backward compatibility)
     if rebuild_fts:
         storage.rebuild_fts_indexes()

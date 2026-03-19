@@ -4,7 +4,7 @@ from collections.abc import Generator
 from hashlib import sha256
 from pathlib import Path
 
-import pytest
+from pytest import fixture
 
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import (
@@ -22,7 +22,7 @@ from axon.core.storage.kuzu_backend import KuzuBackend
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
+@fixture()
 def backend(tmp_path: Path) -> Generator[KuzuBackend]:
     """Return a KuzuBackend initialised in a temporary directory."""
     db_path = tmp_path / "test_db"
@@ -108,7 +108,8 @@ class TestBulkLoad:
         backend: KuzuBackend,
     ) -> None:
         graph = _build_small_graph()
-        backend.bulk_load(graph)
+        # build_fts=False for faster test - FTS not being tested here
+        backend.bulk_load(graph, build_fts=False)
 
         # Both function nodes should be retrievable.
         caller_id = generate_id(NodeLabel.FUNCTION, "src/a.py", "caller")
@@ -125,8 +126,9 @@ class TestBulkLoad:
     def test_bulk_load_replaces_existing(self, backend: KuzuBackend) -> None:
         """Calling bulk_load twice should not duplicate data."""
         graph = _build_small_graph()
-        backend.bulk_load(graph)
-        backend.bulk_load(graph)
+        # build_fts=False for faster test
+        backend.bulk_load(graph, build_fts=False)
+        backend.bulk_load(graph, build_fts=False)
 
         rows = backend.execute_raw("MATCH (n:Function) RETURN n.id")
         assert len(rows) == 2
@@ -183,7 +185,7 @@ class TestGetNode:
 class TestCallersAndCallees:
     def test_get_callers(self, backend: KuzuBackend) -> None:
         graph = _build_small_graph()
-        backend.bulk_load(graph)
+        backend.bulk_load(graph, build_fts=False)
 
         callee_id = generate_id(NodeLabel.FUNCTION, "src/a.py", "callee")
         callers = backend.get_callers(callee_id)
@@ -193,7 +195,7 @@ class TestCallersAndCallees:
 
     def test_get_callees(self, backend: KuzuBackend) -> None:
         graph = _build_small_graph()
-        backend.bulk_load(graph)
+        backend.bulk_load(graph, build_fts=False)
 
         caller_id = generate_id(NodeLabel.FUNCTION, "src/a.py", "caller")
         callees = backend.get_callees(caller_id)
@@ -203,7 +205,7 @@ class TestCallersAndCallees:
 
     def test_get_callers_empty(self, backend: KuzuBackend) -> None:
         graph = _build_small_graph()
-        backend.bulk_load(graph)
+        backend.bulk_load(graph, build_fts=False)
 
         # The caller has no one calling it.
         caller_id = generate_id(NodeLabel.FUNCTION, "src/a.py", "caller")
@@ -212,7 +214,7 @@ class TestCallersAndCallees:
 
     def test_get_callees_empty(self, backend: KuzuBackend) -> None:
         graph = _build_small_graph()
-        backend.bulk_load(graph)
+        backend.bulk_load(graph, build_fts=False)
 
         # The callee does not call anyone.
         callee_id = generate_id(NodeLabel.FUNCTION, "src/a.py", "callee")
@@ -296,7 +298,7 @@ class TestRemoveNodesByFile:
 class TestTraverse:
     def test_traverse_one_hop(self, backend: KuzuBackend) -> None:
         graph = _build_small_graph()
-        backend.bulk_load(graph)
+        backend.bulk_load(graph, build_fts=False)
 
         caller_id = generate_id(NodeLabel.FUNCTION, "src/a.py", "caller")
         nodes = backend.traverse(caller_id, depth=1, direction="callees")
@@ -306,7 +308,7 @@ class TestTraverse:
 
     def test_traverse_zero_depth(self, backend: KuzuBackend) -> None:
         graph = _build_small_graph()
-        backend.bulk_load(graph)
+        backend.bulk_load(graph, build_fts=False)
 
         caller_id = generate_id(NodeLabel.FUNCTION, "src/a.py", "caller")
         nodes = backend.traverse(caller_id, depth=0, direction="callees")

@@ -4,7 +4,7 @@ from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
+from pytest import fixture
 
 from axon.core.ingestion.pipeline import PipelineResult, Pipelines
 from axon.core.storage.kuzu_backend import KuzuBackend
@@ -14,7 +14,7 @@ from axon.core.storage.kuzu_backend import KuzuBackend
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
+@fixture()
 def tmp_repo(tmp_path: Path) -> Path:
     """
     Create a small Python repository under a temporary directory.
@@ -48,7 +48,7 @@ def tmp_repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.fixture()
+@fixture()
 def storage(tmp_path: Path) -> Generator[KuzuBackend]:
     """Provide an initialised KuzuBackend for testing."""
     db_path = tmp_path / "test_db"
@@ -71,7 +71,8 @@ class TestRunPipelineBasic:
         tmp_repo: Path,
         storage: KuzuBackend,
     ) -> None:
-        pipelines = Pipelines(tmp_repo, storage)
+        # build_fts=False for faster test execution
+        pipelines = Pipelines(tmp_repo, storage, build_fts=False)
         pipelines.run_pipelines()
         result = pipelines.result
 
@@ -92,7 +93,8 @@ class TestRunPipelineFileCount:
         tmp_repo: Path,
         storage: KuzuBackend,
     ) -> None:
-        pipelines = Pipelines(tmp_repo, storage)
+        # build_fts=False for faster test execution
+        pipelines = Pipelines(tmp_repo, storage, build_fts=False)
         pipelines.run_pipelines()
         result = pipelines.result
 
@@ -112,7 +114,8 @@ class TestRunPipelineFindsSymbols:
         tmp_repo: Path,
         storage: KuzuBackend,
     ) -> None:
-        pipelines = Pipelines(tmp_repo, storage)
+        # build_fts=False for faster test execution
+        pipelines = Pipelines(tmp_repo, storage, build_fts=False)
         pipelines.run_pipelines()
         result = pipelines.result
 
@@ -132,7 +135,8 @@ class TestRunPipelineFindsRelationships:
         tmp_repo: Path,
         storage: KuzuBackend,
     ) -> None:
-        pipelines = Pipelines(tmp_repo, storage)
+        # build_fts=False for faster test execution
+        pipelines = Pipelines(tmp_repo, storage, build_fts=False)
         pipelines.run_pipelines()
         result = pipelines.result
 
@@ -152,7 +156,8 @@ class TestRunPipelineLoadsToStorage:
         tmp_repo: Path,
         storage: KuzuBackend,
     ) -> None:
-        Pipelines(tmp_repo, storage).run_pipelines()
+        # build_fts=False for faster test execution
+        Pipelines(tmp_repo, storage, build_fts=False).run_pipelines()
 
         # File nodes should be stored. The walker produces paths relative to
         # repo root, so "src/main.py" should exist as a File node.
@@ -166,7 +171,7 @@ class TestRunPipelineLoadsToStorage:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
+@fixture()
 def rich_repo(tmp_path: Path) -> Path:
     """
     Create a repository with classes and type annotations for phases 7-11.
@@ -216,7 +221,7 @@ def rich_repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.fixture()
+@fixture()
 def rich_storage(tmp_path: Path) -> Generator[KuzuBackend]:
     """Provide an initialised KuzuBackend for the rich repo tests."""
     db_path = tmp_path / "rich_db"
@@ -239,7 +244,8 @@ class TestRunPipelineFullPhases:
         rich_repo: Path,
         rich_storage: KuzuBackend,
     ) -> None:
-        pipelines = Pipelines(rich_repo, rich_storage)
+        # build_fts=False for faster test execution
+        pipelines = Pipelines(rich_repo, rich_storage, build_fts=False)
         pipelines.run_pipelines()
         result = pipelines.result
 
@@ -288,7 +294,8 @@ class TestRunPipelineEmbeddings:
             "axon.core.ingestion.pipeline.embed_graph",
             side_effect=RuntimeError("model not found"),
         ):
-            pipelines = Pipelines(rich_repo, rich_storage)
+            # build_fts=False for faster test execution
+            pipelines = Pipelines(rich_repo, rich_storage, build_fts=False)
             pipelines.run_pipelines()
             result = pipelines.result
 

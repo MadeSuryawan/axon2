@@ -52,8 +52,14 @@ class StorageBackend(Protocol):
         """Insert or upsert a batch of relationships."""
         ...
 
-    def bulk_load(self, graph: KnowledgeGraph) -> None:
-        """Replace the entire store contents with *graph*."""
+    def bulk_load(self, graph: KnowledgeGraph, *, build_fts: bool = True) -> None:
+        """
+        Replace the entire store contents with *graph*.
+
+        Args:
+            graph: The KnowledgeGraph to load.
+            build_fts: If False, skip FTS index rebuilding (optimization for tests).
+        """
         ...
 
     def close(self) -> None:

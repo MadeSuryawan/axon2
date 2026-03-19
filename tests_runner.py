@@ -22,27 +22,32 @@ def run_tests(test_files: list[str]) -> list[str]:
 
 
 def main() -> None:
-    _stuck_tests = [
-        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_store_and_retrieve_by_vector",
-        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_vector_search_ranking",
-        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_vector_search_limit",
-        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_store_embeddings_upsert",
-    ]
     tests_dir = Path.cwd().resolve() / "tests"
+
+    _deadlock_tests = [
+        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_store_and_retrieve_by_vector",  # Done (fixed)
+        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_vector_search_ranking",  # Done (fixed)
+        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_vector_search_limit",  # Done (fixed)
+        "tests/core/test_kuzu_search.py::TestEmbeddingsAndVectorSearch::test_store_embeddings_upsert",  # Done (fixed)
+    ]
+
     # long running tests
     excluded = {
-        # "test_kuzu_backend.py", # Done
-        # "test_kuzu_search.py",  # Done
-        # "test_watcher.py", # Done
-        # "test_pipeline.py", # Done
+        "test_kuzu_backend.py",  # Done
+        "test_kuzu_search.py",  # Done
+        "test_watcher.py",  # Done
+        "test_pipeline.py",  # Done
         "test_full_pipeline.py",  # Done
     }
-    test_files = [str(test) for test in tests_dir.rglob("test_*.py") if test.name in excluded]
 
-    if failed_tests := run_tests(test_files):
-        rprint(f"[red]Failed tests:[/red] {failed_tests}")
-    else:
-        rprint("[green]All tests passed[/green]")
+    _test_files = [f"{test}" for test in tests_dir.rglob("test_*.py") if test.name in excluded]
+
+    if failed_tests := run_tests(_test_files):
+        rprint("\n s[red]Failed tests:")
+        rprint(failed_tests)
+        return
+
+    rprint("\n[green]All tests passed!")
 
 
 if __name__ == "__main__":
