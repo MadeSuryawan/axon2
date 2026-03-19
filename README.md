@@ -1,10 +1,22 @@
 # Axon
 
-**Building the knowledge graph for AI code agents.**
+![Axon logo](https://raw.githubusercontent.com/harshkedia177/axon/main/axon-logo.png)
 
-Indexes any codebase into a structural knowledge graph — every dependency, call chain, cluster, and execution flow — then exposes it through smart MCP tools so AI agents never miss code.
+##
 
-```
+[![PyPI version](https://img.shields.io/pypi/v/axoniq)](https://pypi.org/project/axoniq/)
+[![PyPI downloads](https://static.pepy.tech/badge/axoniq/month)](https://pepy.tech/projects/axoniq)
+[![Total installs](https://static.pepy.tech/badge/axoniq)](https://pepy.tech/projects/axoniq)
+[![GitHub stars](https://img.shields.io/github/stars/harshkedia177/axon?style=social)](https://github.com/harshkedia177/axon)
+[![License](https://img.shields.io/pypi/l/axoniq)](https://github.com/harshkedia177/axon/blob/main/LICENSE)
+
+##
+
+### The knowledge graph for your codebase — explore it visually, or let your AI agent query it
+
+Indexes any codebase into a structural knowledge graph — every dependency, call chain, cluster, and execution flow. Explore it through an **interactive web dashboard** with force-directed graph visualization, or expose it through **MCP tools** so AI agents get full structural understanding in every tool call.
+
+```text
 $ axon analyze .
 
 Walking files...               142 files found
@@ -19,6 +31,20 @@ Generating embeddings...       623 vectors stored
 
 Done in 4.2s — 623 symbols, 1,847 edges, 8 clusters, 34 flows
 ```
+
+Then explore your codebase visually:
+
+```bash
+axon ui                      # Opens interactive dashboard at localhost:8420
+```
+
+**Three views, one command:**
+
+- **Explorer** — Interactive force-directed graph (Sigma.js + WebGL). Click any node to see its code, callers, callees, impact radius, and community. Community hull overlays show architectural clusters at a glance.
+- **Analysis** — Health score, coupling heatmap, dead code report, inheritance tree, branch diff — your codebase health in one dashboard.
+- **Cypher Console** — Write and run Cypher queries against the graph with syntax highlighting, presets, and history.
+
+Plus: command palette (`Cmd+K`), keyboard shortcuts, flow trace animations, graph minimap, and SSE-powered live reload when watch mode is active.
 
 ---
 
@@ -59,9 +85,10 @@ A 12-phase pipeline runs once over your repo. After that:
 ```bash
 pip install axoniq            # 1. Install
 cd your-project && axon analyze .  # 2. Index (one command, ~5s for most repos)
+axon ui                       # 3. Explore visually at localhost:8420
 ```
 
-Then add to `.mcp.json` in your project root:
+**For AI agents** — add to `.mcp.json` in your project root:
 
 ```json
 {
@@ -74,15 +101,44 @@ Then add to `.mcp.json` in your project root:
 }
 ```
 
-Your AI agent now has full structural understanding of your codebase. The knowledge graph updates live as you edit.
+**For developers** — explore the graph yourself:
+
+```bash
+axon ui                      # Interactive dashboard (standalone or attaches to running host)
+axon ui --watch              # Live reload on file changes
+axon host --watch            # Shared host: UI + multi-session MCP
+```
 
 ---
 
 ## What You Get
 
+### Explore your codebase visually
+
+#### **Web UI**
+
+A full interactive dashboard — no terminal or extensions required. One command:
+
+```bash
+axon ui                           # Launch at localhost:8420
+axon ui --watch                   # Live reload on file changes
+axon ui --port 9000               # Custom port
+axon ui --dev                     # Dev mode (Vite HMR on :5173)
+```
+
+| View | What It Shows |
+| ------ | -------------- |
+| **Explorer** | Interactive force-directed graph (Sigma.js + WebGL), file tree sidebar, symbol detail panel with code preview, callers/callees, impact analysis, and process memberships. Community hull overlays reveal architectural clusters. |
+| **Analysis** | Health score, coupling heatmap, dead code report, inheritance tree visualization, branch diff, and aggregate stats — your codebase health at a glance. |
+| **Cypher Console** | Query editor with syntax highlighting, preset query library, results table, and query history. |
+
+**Extras:** Command palette (`Cmd+K`), keyboard shortcuts, graph minimap, flow trace and impact ripple animations, SSE-powered live reload when watch mode is enabled.
+
+The UI is backed by a FastAPI server with a full REST API — see [API Endpoints](#api-endpoints) below.
+
 ### Find anything — by name, concept, or typo
 
-**Hybrid Search (BM25 + Vector + Fuzzy)**
+#### **Hybrid Search (BM25 + Vector + Fuzzy)**
 
 Three search strategies fused with [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf):
 
@@ -94,7 +150,7 @@ Results are ranked with test file down-ranking (0.5x) and source function/class 
 
 ### Know what breaks before you change it
 
-**Impact Analysis with Depth Grouping**
+#### **Impact Analysis with Depth Grouping**
 
 When you're about to change a symbol, Axon traces upstream through the call graph, type references, and git coupling history. Results are grouped by depth for actionability:
 
@@ -106,7 +162,7 @@ Every edge carries a confidence score (1.0 = exact match, 0.8 = receiver method,
 
 ### Find what to delete
 
-**Dead Code Detection**
+#### **Dead Code Detection**
 
 Not just "zero callers" — a multi-pass analysis that understands your framework:
 
@@ -118,9 +174,10 @@ Not just "zero callers" — a multi-pass analysis that understands your framewor
 
 ### Understand how code runs, not just where it sits
 
-**Execution Flow Tracing**
+#### **Execution Flow Tracing**
 
 Detects entry points using framework-aware patterns:
+
 - **Python**: `@app.route`, `@router.get`, `@click.command`, `test_*` functions, `__main__` blocks
 - **JavaScript/TypeScript**: Express handlers, exported functions, `handler`/`middleware` patterns
 
@@ -128,17 +185,17 @@ Then traces BFS execution flows from each entry point through the call graph, cl
 
 ### See your architecture without reading docs
 
-**Community Detection**
+#### **Community Detection**
 
 Uses the [Leiden algorithm](https://www.nature.com/articles/s41598-019-41695-z) (igraph + leidenalg) to automatically discover functional clusters. Each community gets a cohesion score and auto-generated label. Agents can ask "what cluster does this symbol belong to?" and get the answer without reading a single design doc.
 
 ### Find hidden dependencies git knows about
 
-**Change Coupling (Git History)**
+#### **Change Coupling (Git History)**
 
 Analyzes 6 months of git history to find dependencies that static analysis misses:
 
-```
+```text
 coupling(A, B) = co_changes(A, B) / max(changes(A), changes(B))
 ```
 
@@ -146,7 +203,7 @@ Files with coupling strength >= 0.3 and 3+ co-changes get linked. These show up 
 
 ### Always up to date
 
-**Watch Mode**
+#### **Watch Mode**
 
 Live re-indexing powered by a Rust-based file watcher (watchfiles):
 
@@ -162,7 +219,7 @@ File-local phases (parse, imports, calls, types) run immediately on change. Glob
 
 ### Structural diff, not text diff
 
-**Branch Comparison**
+#### **Branch Comparison**
 
 Compare branches at the symbol level using git worktrees (no stashing required):
 
@@ -182,7 +239,7 @@ Symbols removed (1):
 
 ### Clean call graphs
 
-**Noise Filtering**
+#### **Noise Filtering**
 
 Built-in blocklist (138 entries) automatically filters language builtins (`print`, `len`, `isinstance`), JS/TS globals (`console`, `setTimeout`, `fetch`), React hooks (`useState`, `useEffect`), and common stdlib methods from the call graph. Your graph shows *your* code's relationships, not noise from `list.append()`.
 
@@ -193,7 +250,7 @@ Built-in blocklist (138 entries) automatically filters language builtins (`print
 Axon builds deep structural understanding through 12 sequential analysis phases:
 
 | Phase | What It Does |
-|-------|-------------|
+| ------- | ------------- |
 | **File Walking** | Walks repo respecting `.gitignore`, filters by supported languages |
 | **Structure** | Creates File/Folder hierarchy with CONTAINS relationships |
 | **Parsing** | tree-sitter AST extraction — functions, classes, methods, interfaces, enums, type aliases |
@@ -239,14 +296,20 @@ Axon exposes its full intelligence as an MCP server. Set it up once, and your AI
 }
 ```
 
-Or run `axon setup --claude` / `axon setup --cursor` to generate the config.
+Optional new feature:
+
+```bash
+axon host --watch
+```
+
+This starts a shared host for the UI and multiple MCP clients. `axon setup --claude` / `axon setup --cursor` still prints the standard config.
 
 The `--watch` flag enables live re-indexing — the graph updates as you edit code.
 
 ### Tools
 
 | Tool | What the agent gets |
-|------|-------------|
+| ------ | ------------- |
 | `axon_query` | Hybrid search (BM25 + vector + fuzzy) with results grouped by execution flow |
 | `axon_context` | 360-degree view — callers, callees, type refs, confidence tags, dead code status |
 | `axon_impact` | Blast radius grouped by depth — direct (will break), indirect (may break), transitive |
@@ -257,7 +320,7 @@ The `--watch` flag enables live re-indexing — the graph updates as you edit co
 
 Every tool response includes a **next-step hint** guiding the agent through a natural investigation workflow:
 
-```
+```text
 query   -> "Next: Use context() on a specific symbol for the full picture."
 context -> "Next: Use impact() if planning changes to this symbol."
 impact  -> "Tip: Review each affected symbol before making changes."
@@ -266,17 +329,43 @@ impact  -> "Tip: Review each affected symbol before making changes."
 ### Resources
 
 | URI | Description |
-|-----|-------------|
+| ----- | ------------- |
 | `axon://overview` | Node and relationship counts by type |
 | `axon://dead-code` | Full dead code report |
 | `axon://schema` | Graph schema reference for Cypher queries |
 
 ---
 
+## API Endpoints
+
+The web UI is backed by a FastAPI server. All endpoints are under `/api`:
+
+| Endpoint | Description |
+| ---------- | ------------- |
+| `GET /api/graph` | Full knowledge graph (paginated) |
+| `GET /api/node/{id}` | Node detail with callers, callees, type refs |
+| `GET /api/overview` | Aggregate node/edge counts |
+| `GET /api/search` | Hybrid search (BM25 + vector + fuzzy) |
+| `GET /api/impact/{id}` | Blast radius analysis by depth |
+| `GET /api/dead-code` | Dead code report |
+| `GET /api/communities` | Community listing with members |
+| `GET /api/coupling` | Change coupling heatmap data |
+| `GET /api/files/{path}` | Source file content with syntax context |
+| `POST /api/cypher` | Execute read-only Cypher queries |
+| `GET /api/diff` | Structural branch comparison |
+| `GET /api/processes` | Execution flow listing |
+| `GET /api/events` | SSE stream for live reload events |
+| `POST /api/reindex` | Trigger a full re-index (watch mode only) |
+
+Cypher queries are validated server-side — write keywords (`CREATE`, `DELETE`, `DROP`, etc.) are rejected after comment stripping.
+
+---
+
 ## How It Compares
 
 | Capability | grep / ripgrep | LSP | Context window stuffing | Axon |
-|-----------|---------------|-----|------------------------|------|
+| ----------- | --------------- | ----- | ------------------------ | ------ |
+| **Interactive graph UI** | **No** | **No** | **No** | **Yes (full web dashboard)** |
 | Text search | Yes | No | Yes | Yes (hybrid BM25 + vector) |
 | Find all callers | No | Partial | Hit-or-miss | Yes (full call graph with confidence) |
 | Type relationships | No | Yes | No | Yes (param/return/variable roles) |
@@ -295,7 +384,7 @@ impact  -> "Tip: Review each affected symbol before making changes."
 ## Supported Languages
 
 | Language | Extensions | Parser |
-|----------|-----------|--------|
+| ---------- | ----------- | -------- |
 | Python | `.py` | tree-sitter-python |
 | TypeScript | `.ts`, `.tsx` | tree-sitter-typescript |
 | JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` | tree-sitter-javascript |
@@ -315,7 +404,7 @@ uv add axoniq
 pip install axoniq[neo4j]
 ```
 
-Requires **Python 3.11+**.
+Requires **Python 3.11+**. The web UI (frontend + backend) is included — no Node.js or extra install needed.
 
 ### From Source
 
@@ -326,11 +415,18 @@ uv sync --all-extras
 uv run axon --help
 ```
 
+To rebuild the frontend after making changes (requires Node.js 18+):
+
+```bash
+cd src/axon/web/frontend
+npm install && npm run build
+```
+
 ---
 
 ## CLI Reference
 
-```
+```text
 axon analyze [PATH]          Index a repository (default: current directory)
     --full                   Force full rebuild (skip incremental)
     --no-embeddings          Skip vector embedding generation (faster indexing)
@@ -352,6 +448,19 @@ axon cypher QUERY            Execute a raw Cypher query (read-only)
 
 axon watch                   Watch mode — live re-indexing on file changes
 axon diff BASE..HEAD         Structural branch comparison
+
+axon host                    Shared host for UI + HTTP MCP (default: localhost:8420)
+    --port / -p PORT         Port to serve on (default: 8420)
+    --watch / --no-watch     Enable live file watching
+    --dev                    Dev mode — proxy to Vite dev server for HMR
+    --no-open                Don't auto-open browser
+
+axon ui                      Launch the web UI (default: localhost:8420)
+    --port / -p PORT         Port to serve on (default: 8420)
+    --watch / -w             Enable live file watching with auto-reindex
+    --dev                    Dev mode — proxy to Vite dev server for HMR
+    --no-open                Don't auto-open browser
+    --direct                 Force standalone mode even if a shared host exists
 
 axon setup                   Print MCP configuration JSON
     --claude                 For Claude Code
@@ -405,7 +514,7 @@ axon cypher "MATCH (a:File)-[r:CodeRelation]->(b:File) WHERE r.rel_type = 'coupl
 ### Nodes
 
 | Label | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `File` | Source file |
 | `Folder` | Directory |
 | `Function` | Top-level function |
@@ -420,7 +529,7 @@ axon cypher "MATCH (a:File)-[r:CodeRelation]->(b:File) WHERE r.rel_type = 'coupl
 ### Relationships
 
 | Type | Description | Key Properties |
-|------|-------------|----------------|
+| ------ | ------------- | ---------------- |
 | `CONTAINS` | Folder -> File/Symbol hierarchy | -- |
 | `DEFINES` | File -> Symbol it defines | -- |
 | `CALLS` | Symbol -> Symbol it calls | `confidence` (0.0-1.0) |
@@ -435,7 +544,7 @@ axon cypher "MATCH (a:File)-[r:CodeRelation]->(b:File) WHERE r.rel_type = 'coupl
 
 ### Node ID Format
 
-```
+```text
 {label}:{relative_path}:{symbol_name}
 
 Examples:
@@ -448,7 +557,7 @@ Examples:
 
 ## Architecture
 
-```
+```text
 Source Code (.py, .ts, .js, .tsx, .jsx)
     |
     v
@@ -476,27 +585,30 @@ Source Code (.py, .ts, .js, .tsx, .jsx)
                        |
               StorageBackend Protocol
                        |
-              +--------+--------+
-              v                 v
-        +----------+     +----------+
-        |   MCP    |     |   CLI    |
-        |  Server  |     | (Typer)  |
-        | (stdio)  |     |          |
-        +----+-----+     +----+-----+
-             |                |
-        Claude Code      Terminal
-        / Cursor         (developer)
+           +-----------+-----------+
+           v           v           v
+     +----------+ +----------+ +----------+
+     |   MCP    | |  Web UI  | |   CLI    |
+     |  Server  | | (FastAPI | | (Typer)  |
+     | (stdio)  | |  + React)| |          |
+     +----+-----+ +----+-----+ +----+-----+
+          |             |            |
+     Claude Code    Browser      Terminal
+     / Cursor      (developer)  (developer)
 ```
 
 ### Tech Stack
 
 | Layer | Technology | Purpose |
-|-------|-----------|---------|
+| ------- | ----------- | --------- |
 | Parsing | tree-sitter | Language-agnostic AST extraction |
 | Graph Storage | KuzuDB | Embedded graph database with Cypher, FTS, and vector support |
 | Graph Algorithms | igraph + leidenalg | Leiden community detection |
 | Embeddings | fastembed | ONNX-based 384-dim vectors (~100MB, no PyTorch) |
 | MCP Protocol | mcp SDK (FastMCP) | AI agent communication via stdio |
+| Web Backend | FastAPI + Uvicorn | REST API for the web UI, SSE for live updates |
+| Web Frontend | React + TypeScript + Vite | Interactive dashboard with Tailwind CSS |
+| Graph Visualization | Sigma.js + Graphology | WebGL graph rendering with ForceAtlas2 layout |
 | CLI | Typer + Rich | Terminal interface with progress bars |
 | File Watching | watchfiles | Rust-based file system watcher |
 | Gitignore | pathspec | Full `.gitignore` pattern matching |
@@ -505,7 +617,7 @@ Source Code (.py, .ts, .js, .tsx, .jsx)
 
 Everything lives locally:
 
-```
+```text
 your-project/
 +-- .axon/
     +-- kuzu/          # KuzuDB graph database (graph + FTS + vectors)
@@ -535,6 +647,13 @@ uv run ruff check src/
 
 # Run from source
 uv run axon --help
+
+# Frontend development (React + Vite with HMR)
+cd src/axon/web/frontend
+npm install
+npm run dev                  # Vite dev server on :5173
+# In another terminal:
+uv run axon ui --dev         # Backend on :8420, proxies to Vite
 ```
 
 ---
