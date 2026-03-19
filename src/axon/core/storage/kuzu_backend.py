@@ -18,7 +18,7 @@ from logging import getLogger
 from math import isfinite
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from threading import RLock
+from threading import Lock
 from time import sleep
 from typing import Any
 
@@ -111,45 +111,33 @@ def _table_for_id(node_id: str) -> str | None:
 _EMBEDDING_PROPERTIES = "node_id STRING, vec DOUBLE[], PRIMARY KEY(node_id)"
 
 
-class _Helpers:
-    """
-    Private base class encapsulating reusable implementation details and cross-cutting concerns for the KuzuDB storage backend.
+# =============================================================================
+# Helper Classes with Single Responsibilities
+# =============================================================================
 
-    This class contains all helper methods organized by the public method
-    they support, providing a clean separation between public API and
-    internal implementation.
+
+class SchemaManager:
+    """
+    Manages database schema creation and FTS index operations.
+
+    Responsibilities:
+    - Creating node, relationship, and embedding tables
+    - Loading FTS extension
+    - Creating and rebuilding FTS indexes
     """
 
-    # === Instance state (shared with KuzuBackend via composition) ===
-    _db: Database | None
-    _conn: Connection | None
-    # Using RLock to prevent deadlocks when methods call each other
-    # (e.g., vector_search -> _fetch_node_metadata -> _query_nodes all need the lock)
-    _lock: RLock
-    _nodes_count: int
-    _table_count: int
+    def __init__(self, backend: "KuzuBackend") -> None:
+        self._backend = backend
 
     def _ensure_initialized(self) -> Connection:
-        """
-        Ensure the backend is initialized and return the connection.
-
-        Raises:
-            BackendNotInitializedError: If initialize() has not been called.
-
-        Returns:
-            The active Connection instance.
-        """
-        if not self._conn:
+        """Ensure the backend is initialized and return the connection."""
+        conn = self._backend._conn
+        if conn is None:
             details = "KuzuBackend.initialize() must be called before use"
             raise RuntimeError(details)
-        return self._conn
+        return conn
 
-    # =============================================================================
-    # SECTION: Schema & Initialization
-    # Supports: initialize(), rebuild_fts_indexes()
-    # =============================================================================
-
-    def _create_schema(self) -> None:
+    def create_schema(self) -> None:
         """Create node/rel/embedding tables and the FTS extension."""
         conn = self._ensure_initialized()
 
@@ -196,19 +184,21 @@ class _Helpers:
                     f"['name', 'content', 'signature'])",
                 )
 
-    def _build_index_for_table(self, table: str) -> str:
+    def build_index_for_table(self, table: str) -> str:
         """Build FTS index for a single table using a dedicated connection."""
         # Each thread gets its own connection from the same Database
-        if not (db := self._db):
+        db = self._backend._db
+        if db is None:
             details = "Database not initialized"
             raise RuntimeError(details)
 
+        lock = self._backend._lock
         conn = Connection(db)
         try:
             idx_name = f"{table.lower()}_fts"
-            with suppress(Exception), self._lock:
+            with suppress(Exception), lock:
                 conn.execute(f"CALL DROP_FTS_INDEX('{table}', '{idx_name}')")
-            with self._lock:
+            with lock:
                 conn.execute(
                     f"CALL CREATE_FTS_INDEX('{table}', '{idx_name}', "
                     f"['name', 'content', 'signature'])",
@@ -217,12 +207,30 @@ class _Helpers:
         finally:
             del conn  # Release connection
 
-    # =============================================================================
-    # SECTION: Node Insertion
-    # Supports: add_nodes()
-    # =============================================================================
 
-    def _check_duplicate_node(self, table: str, node_id: str) -> bool:
+class NodeManager:
+    """
+    Manages node operations in the database.
+
+    Responsibilities:
+    - Inserting nodes into tables
+    - Checking for duplicate nodes
+    - Querying nodes with various filters
+    - Converting database rows to GraphNode objects
+    """
+
+    def __init__(self, backend: "KuzuBackend") -> None:
+        self._backend = backend
+
+    def _ensure_initialized(self) -> Connection:
+        """Ensure the backend is initialized and return the connection."""
+        conn = self._backend._conn
+        if conn is None:
+            details = "KuzuBackend.initialize() must be called before use"
+            raise RuntimeError(details)
+        return conn
+
+    def check_duplicate_node(self, table: str, node_id: str) -> bool:
         """Check if a node with the same id already exists."""
         conn = self._ensure_initialized()
         query = f"MATCH (n:{table}) WHERE n.id = $nid RETURN n.id"
@@ -231,14 +239,14 @@ class _Helpers:
             return False
         return result.has_next()
 
-    def _insert_node(self, node: GraphNode) -> None:
+    def insert_node(self, node: GraphNode) -> None:
         """INSERT a single node into the appropriate label table using parameterized query."""
         conn = self._ensure_initialized()
         table = _LABEL_TO_TABLE.get(node.label.value)
         if table is None:
             logger.warning("Unknown label %s for node %s", node.label, node.id)
             return
-        if self._check_duplicate_node(table, node.id):
+        if self.check_duplicate_node(table, node.id):
             return
         query = (
             f"CREATE (:{table} {{"
@@ -273,72 +281,13 @@ class _Helpers:
         except RuntimeError:
             logger.debug("Insert node failed for %s", node.id, exc_info=True)
 
-    # =============================================================================
-    # SECTION: Relationship Insertion
-    # Supports: add_relationships()
-    # =============================================================================
-
-    def _insert_relationship(self, rel: GraphRelationship) -> None:
-        """MATCH source and target, then CREATE the relationship using parameterized query."""
-        conn = self._ensure_initialized()
-        src_table = _table_for_id(rel.source)
-        tgt_table = _table_for_id(rel.target)
-        if src_table is None or tgt_table is None:
-            logger.warning(
-                "Cannot resolve tables for relationship %s -> %s",
-                rel.source,
-                rel.target,
-            )
-            return
-
-        props = rel.properties or {}
-
-        query = (
-            f"MATCH (a:{src_table}), (b:{tgt_table}) "
-            f"WHERE a.id = $src AND b.id = $tgt "
-            f"CREATE (a)-[:CodeRelation {{"
-            f"rel_type: $rel_type, "
-            f"confidence: $confidence, "
-            f"role: $role, "
-            f"step_number: $step_number, "
-            f"strength: $strength, "
-            f"co_changes: $co_changes, "
-            f"symbols: $symbols"
-            f"}}]->(b)"
-        )
-        params = {
-            "src": rel.source,
-            "tgt": rel.target,
-            "rel_type": rel.type.value,
-            "confidence": float(props.get("confidence", 1.0)),
-            "role": str(props.get("role", "")),
-            "step_number": int(props.get("step_number", 0)),
-            "strength": float(props.get("strength", 0.0)),
-            "co_changes": int(props.get("co_changes", 0)),
-            "symbols": str(props.get("symbols", "")),
-        }
-        try:
-            conn.execute(query, parameters=params)
-        except RuntimeError:
-            logger.debug(
-                "Insert relationship failed: %s -> %s",
-                rel.source,
-                rel.target,
-                exc_info=True,
-            )
-
-    # =============================================================================
-    # SECTION: Node Query Results
-    # Supports: get_node(), get_callers(), get_callees(), get_type_refs(),
-    #           get_callers_with_confidence(), get_callees_with_confidence()
-    # =============================================================================
-
-    def _query_nodes(self, query: str, parameters: dict[str, Any] | None = None) -> list[GraphNode]:
+    def query_nodes(self, query: str, parameters: dict[str, Any] | None = None) -> list[GraphNode]:
         """Execute a query returning ``n.*`` columns and convert to GraphNode list."""
         conn = self._ensure_initialized()
         nodes: list[GraphNode] = []
+        lock = self._backend._lock
         try:
-            with self._lock:
+            with lock:
                 result = conn.execute(query, parameters=parameters or {})
             if not isinstance(result, QueryResult):
                 return []
@@ -346,13 +295,13 @@ class _Helpers:
                 row = result.get_next()
                 if not isinstance(row, list):
                     continue
-                node = self._row_to_node(row)
+                node = self.row_to_node(row)
                 nodes.append(node) if node else None
         except RuntimeError:
-            logger.debug(f"_query_nodes failed: {query}", exc_info=True)
+            logger.debug(f"query_nodes failed: {query}", exc_info=True)
         return nodes
 
-    def _query_nodes_with_confidence(
+    def query_nodes_with_confidence(
         self,
         query: str,
         parameters: dict[str, Any] | None = None,
@@ -360,8 +309,9 @@ class _Helpers:
         """Execute a query returning ``n.*`` columns plus a trailing confidence column."""
         conn = self._ensure_initialized()
         pairs: list[tuple[GraphNode, float]] = []
+        lock = self._backend._lock
         try:
-            with self._lock:
+            with lock:
                 result = conn.execute(query, parameters=parameters or {})
             if not isinstance(result, QueryResult):
                 return []
@@ -369,7 +319,7 @@ class _Helpers:
                 row = result.get_next()
                 if not isinstance(row, list):
                     continue
-                node = self._row_to_node(row[:-1])
+                node = self.row_to_node(row[:-1])
                 confidence = float(row[-1]) if row[-1] is not None else 1.0
                 if node is not None:
                     pairs.append((node, confidence))
@@ -378,7 +328,7 @@ class _Helpers:
         return pairs
 
     @staticmethod
-    def _row_to_node(row: list[Any], node_id: str | None = None) -> GraphNode | None:
+    def row_to_node(row: list[Any], node_id: str | None = None) -> GraphNode | None:
         """
         Convert a result row from ``RETURN n.*`` into a GraphNode.
 
@@ -428,12 +378,78 @@ class _Helpers:
             logger.debug("Failed to convert row to GraphNode: %s", row, exc_info=True)
             return None
 
-    # =============================================================================
-    # SECTION: Edge Parsing
-    # Supports: get_inbound_cross_file_edges(), _load_relationships_to_graph()
-    # =============================================================================
 
-    def _parse_edge_row(self, row: list[Any]) -> GraphRelationship | None:
+class RelationshipManager:
+    """
+    Manages relationship operations in the database.
+
+    Responsibilities:
+    - Inserting relationships between nodes
+    - Parsing relationship rows from query results
+    """
+
+    def __init__(self, backend: "KuzuBackend") -> None:
+        self._backend = backend
+
+    def _ensure_initialized(self) -> Connection:
+        """Ensure the backend is initialized and return the connection."""
+        conn = self._backend._conn
+        if conn is None:
+            details = "KuzuBackend.initialize() must be called before use"
+            raise RuntimeError(details)
+        return conn
+
+    def insert_relationship(self, rel: GraphRelationship) -> None:
+        """MATCH source and target, then CREATE the relationship using parameterized query."""
+        conn = self._ensure_initialized()
+        src_table = _table_for_id(rel.source)
+        tgt_table = _table_for_id(rel.target)
+        if src_table is None or tgt_table is None:
+            logger.warning(
+                "Cannot resolve tables for relationship %s -> %s",
+                rel.source,
+                rel.target,
+            )
+            return
+
+        props = rel.properties or {}
+
+        query = (
+            f"MATCH (a:{src_table}), (b:{tgt_table}) "
+            f"WHERE a.id = $src AND b.id = $tgt "
+            f"CREATE (a)-[:CodeRelation {{"
+            f"rel_type: $rel_type, "
+            f"confidence: $confidence, "
+            f"role: $role, "
+            f"step_number: $step_number, "
+            f"strength: $strength, "
+            f"co_changes: $co_changes, "
+            f"symbols: $symbols"
+            f"}}]->(b)"
+        )
+        params = {
+            "src": rel.source,
+            "tgt": rel.target,
+            "rel_type": rel.type.value,
+            "confidence": float(props.get("confidence", 1.0)),
+            "role": str(props.get("role", "")),
+            "step_number": int(props.get("step_number", 0)),
+            "strength": float(props.get("strength", 0.0)),
+            "co_changes": int(props.get("co_changes", 0)),
+            "symbols": str(props.get("symbols", "")),
+        }
+        try:
+            conn.execute(query, parameters=params)
+        except RuntimeError:
+            logger.debug(
+                "Insert relationship failed: %s -> %s",
+                rel.source,
+                rel.target,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def parse_edge_row(row: list[Any]) -> GraphRelationship | None:
         """Parse a result row into a GraphRelationship."""
         src_id: str = row[0] or ""
         tgt_id: str = row[2] or ""
@@ -465,12 +481,28 @@ class _Helpers:
             properties=props,
         )
 
-    # =============================================================================
-    # SECTION: Search Results
-    # Supports: fts_search(), fts_search_async()
-    # =============================================================================
 
-    def _parse_fts_result(
+class SearchHelper:
+    """
+    Manages search-related operations.
+
+    Responsibilities:
+    - Parsing FTS (Full-Text Search) results
+    - Fetching node metadata for vector search results
+    """
+
+    def __init__(self, backend: "KuzuBackend") -> None:
+        self._backend = backend
+
+    def _ensure_initialized(self) -> Connection:
+        """Ensure the backend is initialized and return the connection."""
+        conn = self._backend._conn
+        if conn is None:
+            details = "KuzuBackend.initialize() must be called before use"
+            raise RuntimeError(details)
+        return conn
+
+    def parse_fts_result(
         self,
         result: QueryResult | list[QueryResult] | None,
     ) -> list[SearchResult]:
@@ -525,10 +557,61 @@ class _Helpers:
 
         return candidates
 
-    # =============================================================================
-    # SECTION: Bulk Loading
-    # Supports: bulk_load()
-    # =============================================================================
+    def fetch_node_metadata(self, node_ids: list[str]) -> dict[str, GraphNode]:
+        """Fetch node metadata in batches across tables."""
+        node_cache: dict[str, GraphNode] = {}
+        ids_by_table: dict[str, list[str]] = {}
+        for nid in node_ids:
+            if table := _table_for_id(nid):
+                ids_by_table.setdefault(table, []).append(nid)
+
+        for table, ids in ids_by_table.items():
+            try:
+                q = f"MATCH (n:{table}) WHERE n.id IN $ids RETURN n.*"
+                lock = self._backend._lock
+                with lock:
+                    conn = self._ensure_initialized()
+                    result = conn.execute(q, parameters={"ids": ids})
+                if not isinstance(result, QueryResult):
+                    return node_cache
+                while result.has_next():
+                    row = result.get_next()
+                    if not isinstance(row, list):
+                        continue
+                    node = NodeManager.row_to_node(row)
+                    if node:
+                        node_cache[node.id] = node
+            except RuntimeError:
+                logger.debug(f"Batch node fetch failed for table {table}", exc_info=True)
+        return node_cache
+
+
+class BulkLoader:
+    """
+    Manages bulk loading operations using CSV.
+
+    Responsibilities:
+    - Writing data to temporary CSV files
+    - Loading nodes via CSV
+    - Loading relationships via CSV
+    - Storing embeddings via CSV
+    """
+
+    def __init__(self, backend: "KuzuBackend") -> None:
+        self._backend = backend
+        self._nodes_count: int = 0
+
+    def set_nodes_count(self, count: int) -> None:
+        """Set the node count for progress tracking."""
+        self._nodes_count = count
+
+    def _ensure_initialized(self) -> Connection:
+        """Ensure the backend is initialized and return the connection."""
+        conn = self._backend._conn
+        if conn is None:
+            details = "KuzuBackend.initialize() must be called before use"
+            raise RuntimeError(details)
+        return conn
 
     def _csv_copy(self, table: str, rows: list[list[Any]]) -> None:
         """
@@ -549,13 +632,12 @@ class _Helpers:
             if csv_path:
                 Path(csv_path).unlink(missing_ok=True)
 
-    def _bulk_load_nodes_csv(self, graph: KnowledgeGraph, pbar: tqdm) -> bool:
+    def bulk_load_nodes_csv(self, graph: KnowledgeGraph, pbar: tqdm) -> bool:
         """
         Load all nodes via temporary CSV files + COPY FROM.
 
         Returns True on success, False if COPY FROM is not available.
         """
-        # logger.info("Bulk loading nodes via temporary CSV files...")
         pbar = reset_pbar(pbar, self._nodes_count, "Collecting nodes table")
         by_table: dict[str, list[GraphNode]] = {}
 
@@ -599,13 +681,12 @@ class _Helpers:
             return False
         return True
 
-    def _bulk_load_rels_csv(self, graph: KnowledgeGraph, pbar: tqdm) -> bool:
+    def bulk_load_rels_csv(self, graph: KnowledgeGraph, pbar: tqdm) -> bool:
         """
         Load all relationships via temporary CSV files + COPY FROM.
 
         Returns True on success, False if COPY FROM is not available.
         """
-        # logger.info("Bulk loading relationships via temporary CSV files...")
         pbar = reset_pbar(pbar, self._nodes_count, "Collecting relationships table")
         by_pair: dict[tuple[str, str], list[GraphRelationship]] = {}
 
@@ -643,12 +724,7 @@ class _Helpers:
 
         return True
 
-    # =============================================================================
-    # SECTION: Embedding Storage
-    # Supports: store_embeddings(), upsert_embeddings()
-    # =============================================================================
-
-    def _bulk_store_embeddings_csv(self, embeddings: list[NodeEmbedding]) -> bool:
+    def bulk_store_embeddings_csv(self, embeddings: list[NodeEmbedding]) -> bool:
         """
         Store embeddings via temporary CSV + COPY FROM.
 
@@ -671,52 +747,44 @@ class _Helpers:
             logger.debug("CSV bulk_store_embeddings failed, falling back", exc_info=True)
             return False
 
-    # =============================================================================
-    # SECTION: Vector Search
-    # Supports: vector_search()
-    # =============================================================================
 
-    def _fetch_node_metadata(self, node_ids: list[str]) -> dict[str, GraphNode]:
-        """Fetch node metadata in batches across tables."""
-        node_cache: dict[str, GraphNode] = {}
-        ids_by_table: dict[str, list[str]] = {}
-        for nid in node_ids:
-            if table := _table_for_id(nid):
-                ids_by_table.setdefault(table, []).append(nid)
+class GraphLoader:
+    """
+    Manages loading data from the database into a KnowledgeGraph.
 
-        for table, ids in ids_by_table.items():
-            try:
-                q = f"MATCH (n:{table}) WHERE n.id IN $ids RETURN n.*"
-                with self._lock:
-                    nodes = self._query_nodes(q, parameters={"ids": ids})
-                if isinstance(nodes, QueryResult):
-                    return node_cache
-                for node in nodes:
-                    node_cache[node.id] = node
-            except RuntimeError:
-                logger.debug(f"Batch node fetch failed for table {table}", exc_info=True)
-        return node_cache
+    Responsibilities:
+    - Loading nodes from all tables into a graph
+    - Loading relationships from the database into a graph
+    """
 
-    # =============================================================================
-    # SECTION: Graph Loading
-    # Supports: load_graph()
-    # =============================================================================
+    def __init__(self, backend: "KuzuBackend") -> None:
+        self._backend = backend
 
-    def _load_nodes_to_graph(self, graph: KnowledgeGraph) -> None:
+    def _ensure_initialized(self) -> Connection:
+        """Ensure the backend is initialized and return the connection."""
+        conn = self._backend._conn
+        if conn is None:
+            details = "KuzuBackend.initialize() must be called before use"
+            raise RuntimeError(details)
+        return conn
+
+    def load_nodes_to_graph(self, graph: KnowledgeGraph) -> None:
         """Load all nodes from every table into the graph."""
+        node_manager = NodeManager(self._backend)
         for table in _NODE_TABLE_NAMES:
             try:
-                # Use _query_nodes which handles the row-to-node conversion
-                for node in self._query_nodes(f"MATCH (n:{table}) RETURN n.*"):
+                # Use query_nodes which handles the row-to-node conversion
+                for node in node_manager.query_nodes(f"MATCH (n:{table}) RETURN n.*"):
                     graph.add_node(node)
             except RuntimeError:
                 logger.debug(f"load_graph: failed to read table {table}", exc_info=True)
 
-    def _load_relationships_to_graph(self, graph: KnowledgeGraph) -> None:
+    def load_relationships_to_graph(self, graph: KnowledgeGraph) -> None:
         """Load all relationships from the database into the graph."""
         conn = self._ensure_initialized()
+        lock = self._backend._lock
         try:
-            with self._lock:
+            with lock:
                 result = conn.execute(
                     "MATCH (a)-[r:CodeRelation]->(b) "
                     "RETURN a.id, b.id, r.rel_type, r.confidence, r.role, "
@@ -727,11 +795,11 @@ class _Helpers:
             while result.has_next():
                 if not isinstance((row := result.get_next()), list):
                     continue
-                # Mapping result format to _parse_edge_row expected format
-                # _parse_edge_row expects: row[0]=src_id, row[1]=src_file(unused), row[2]=tgt_id, row[3...]=props
+                # Mapping result format to parse_edge_row expected format
+                # parse_edge_row expects: row[0]=src_id, row[1]=src_file(unused), row[2]=tgt_id, row[3...]=props
                 src_id, tgt_id = row[0], row[1]
                 mapped_row = [src_id, None, tgt_id] + row[2:]
-                if rel := self._parse_edge_row(mapped_row):
+                if rel := RelationshipManager.parse_edge_row(mapped_row):
                     graph.add_relationship(rel)
         except Exception:
             logger.error(
@@ -741,7 +809,12 @@ class _Helpers:
             raise
 
 
-class KuzuBackend(_Helpers):
+# =============================================================================
+# KuzuBackend with Composition over Inheritance
+# =============================================================================
+
+
+class KuzuBackend:
     """
     StorageBackend implementation backed by KuzuDB.
 
@@ -759,11 +832,24 @@ class KuzuBackend(_Helpers):
     def __init__(self) -> None:
         self._db: Database | None = None
         self._conn: Connection | None = None
-        # Using RLock to prevent deadlocks when methods call each other
-        # (e.g., vector_search -> _fetch_node_metadata -> _query_nodes all need the lock)
-        self._lock: RLock = RLock()
-        self._nodes_count: int = 0
-        self._table_count: int = len(_NODE_TABLE_NAMES)
+        self._lock = Lock()
+        self._nodes_count = 0
+        self._table_count = len(_NODE_TABLE_NAMES)
+
+        # Initialize helper classes with composition
+        self._schema_manager = SchemaManager(self)
+        self._node_manager = NodeManager(self)
+        self._relationship_manager = RelationshipManager(self)
+        self._search_helper = SearchHelper(self)
+        self._bulk_loader = BulkLoader(self)
+        self._graph_loader = GraphLoader(self)
+
+    def _ensure_initialized(self) -> Connection:
+        """Ensure the backend is initialized and return the connection."""
+        if not self._conn:
+            details = "KuzuBackend.initialize() must be called before use"
+            raise RuntimeError(details)
+        return self._conn
 
     def add_nodes(self, nodes: list[GraphNode], pbar: tqdm | None = None) -> None:
         """Insert nodes into their respective label tables."""
@@ -771,7 +857,7 @@ class KuzuBackend(_Helpers):
             pbar = reset_pbar(pbar, len(nodes), "2. Adding nodes directly")
 
         for node in nodes:
-            self._insert_node(node)
+            self._node_manager.insert_node(node)
             pbar.update() if pbar else None
 
     def add_relationships(self, rels: list[GraphRelationship], pbar: tqdm | None = None) -> None:
@@ -780,7 +866,7 @@ class KuzuBackend(_Helpers):
             pbar = reset_pbar(pbar, len(rels), "3. Adding relationships directly")
 
         for rel in rels:
-            self._insert_relationship(rel)
+            self._relationship_manager.insert_relationship(rel)
             pbar.update() if pbar else None
 
     def bulk_load(self, graph: KnowledgeGraph) -> None:
@@ -792,16 +878,20 @@ class KuzuBackend(_Helpers):
         """
         conn = self._ensure_initialized()
         self._nodes_count = graph.node_count
+
+        # Update bulk loader with node count
+        self._bulk_loader.set_nodes_count(self._nodes_count)
+
         pbar = p_bar(desc="1. Deleting detached tables", total=self._table_count)
         for table in _NODE_TABLE_NAMES:
             with suppress(Exception):
                 conn.execute(f"MATCH (n:{table}) DETACH DELETE n")
             pbar.update()
 
-        if not self._bulk_load_nodes_csv(graph, pbar):
+        if not self._bulk_loader.bulk_load_nodes_csv(graph, pbar):
             self.add_nodes(list(graph.iter_nodes()), pbar=pbar)
 
-        if not self._bulk_load_rels_csv(graph, pbar):
+        if not self._bulk_loader.bulk_load_rels_csv(graph, pbar):
             self.add_relationships(list(graph.iter_relationships()), pbar=pbar)
 
         self.rebuild_fts_indexes(pbar)
@@ -925,7 +1015,7 @@ class KuzuBackend(_Helpers):
                 with self._lock:
                     result = conn.execute(cypher)
 
-                candidates.extend(self._parse_fts_result(result))
+                candidates.extend(self._search_helper.parse_fts_result(result))
             except RuntimeError:
                 logger.debug("fts_search failed on table %s", table, exc_info=True)
 
@@ -964,7 +1054,7 @@ class KuzuBackend(_Helpers):
             )
             try:
                 result = await conn.execute(cypher)
-                return self._parse_fts_result(result)
+                return self._search_helper.parse_fts_result(result)
             except RuntimeError:
                 logger.debug("fts_search_async failed for table %s", table, exc_info=True)
                 return []
@@ -1047,7 +1137,7 @@ class KuzuBackend(_Helpers):
             f"WHERE caller.id = $nid AND r.rel_type = 'calls' "
             f"RETURN callee.*"
         )
-        return self._query_nodes(query, parameters={"nid": node_id})
+        return self._node_manager.query_nodes(query, parameters={"nid": node_id})
 
     def get_callees_with_confidence(self, node_id: str) -> list[tuple[GraphNode, float]]:
         """Return ``(node, confidence)`` for all callees of *node_id*."""
@@ -1060,7 +1150,7 @@ class KuzuBackend(_Helpers):
             f"WHERE caller.id = $nid AND r.rel_type = 'calls' "
             f"RETURN callee.*, r.confidence"
         )
-        return self._query_nodes_with_confidence(query, parameters={"nid": node_id})
+        return self._node_manager.query_nodes_with_confidence(query, parameters={"nid": node_id})
 
     def get_callers(self, node_id: str) -> list[GraphNode]:
         """Return nodes that CALL the node identified by *node_id*."""
@@ -1074,7 +1164,7 @@ class KuzuBackend(_Helpers):
             f"WHERE callee.id = $nid AND r.rel_type = 'calls' "
             f"RETURN caller.*"
         )
-        return self._query_nodes(query, parameters={"nid": node_id})
+        return self._node_manager.query_nodes(query, parameters={"nid": node_id})
 
     def get_callers_with_confidence(self, node_id: str) -> list[tuple[GraphNode, float]]:
         """Return ``(node, confidence)`` for all callers of *node_id*."""
@@ -1087,7 +1177,7 @@ class KuzuBackend(_Helpers):
             f"WHERE callee.id = $nid AND r.rel_type = 'calls' "
             f"RETURN caller.*, r.confidence"
         )
-        return self._query_nodes_with_confidence(query, parameters={"nid": node_id})
+        return self._node_manager.query_nodes_with_confidence(query, parameters={"nid": node_id})
 
     def get_file_index(self) -> dict[str, str]:
         """Return ``{file_path: node_id}`` for all File nodes."""
@@ -1141,7 +1231,7 @@ class KuzuBackend(_Helpers):
                 src_file: str = row[1] or ""
                 if src_file in exclude:
                     continue
-                rel = self._parse_edge_row(row)
+                rel = RelationshipManager.parse_edge_row(row)
                 if rel is not None:
                     edges.append(rel)
         except (RuntimeError, ConnectionError, SystemError):
@@ -1195,7 +1285,7 @@ class KuzuBackend(_Helpers):
                 and result.has_next()
                 and isinstance((row := result.get_next()), list)
             ):
-                return self._row_to_node(row, node_id)
+                return NodeManager.row_to_node(row, node_id)
         except RuntimeError:
             logger.warning("get_node failed for %s", node_id, exc_info=True)
         return None
@@ -1263,7 +1353,7 @@ class KuzuBackend(_Helpers):
             f"WHERE src.id = $nid AND r.rel_type = 'uses_type' "
             f"RETURN tgt.*"
         )
-        return self._query_nodes(query, parameters={"nid": node_id})
+        return self._node_manager.query_nodes(query, parameters={"nid": node_id})
 
     def initialize(
         self,
@@ -1284,7 +1374,7 @@ class KuzuBackend(_Helpers):
                 self._db = Database(str(path), read_only=read_only)
                 self._conn = Connection(self._db)
                 if not read_only:
-                    self._create_schema()
+                    self._schema_manager.create_schema()
                 return
             except RuntimeError as e:
                 if "lock" in str(e).lower() and attempt < max_retries:
@@ -1303,8 +1393,8 @@ class KuzuBackend(_Helpers):
         """Reconstruct a full :class:`KnowledgeGraph` from the database."""
         self._ensure_initialized()
         graph = KnowledgeGraph()
-        self._load_nodes_to_graph(graph)
-        self._load_relationships_to_graph(graph)
+        self._graph_loader.load_nodes_to_graph(graph)
+        self._graph_loader.load_relationships_to_graph(graph)
         return graph
 
     def rebuild_fts_indexes(self, pbar: tqdm | None = None, max_workers: int = 4) -> None:
@@ -1325,7 +1415,7 @@ class KuzuBackend(_Helpers):
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(self._build_index_for_table, table): table
+                executor.submit(self._schema_manager.build_index_for_table, table): table
                 for table in _NODE_TABLE_NAMES
             }
             for future in as_completed(futures):
@@ -1388,7 +1478,7 @@ class KuzuBackend(_Helpers):
             rprint("\n[b blue]No embeddings to store")
             return
 
-        if self._bulk_store_embeddings_csv(embeddings):
+        if self._bulk_loader.bulk_store_embeddings_csv(embeddings):
             rprint("\n[b blue]Embeddings stored via CSV COPY")
             return
 
@@ -1523,7 +1613,7 @@ class KuzuBackend(_Helpers):
         if not emb_rows:
             return []
 
-        node_cache = self._fetch_node_metadata([r[0] for r in emb_rows])
+        node_cache = self._search_helper.fetch_node_metadata([r[0] for r in emb_rows])
         results: list[SearchResult] = []
         for node_id, sim in emb_rows:
             node = node_cache.get(node_id)
